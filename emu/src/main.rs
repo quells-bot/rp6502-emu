@@ -1,3 +1,6 @@
+mod bus;
+mod pix;
+
 use eframe::egui;
 
 fn main() -> eframe::Result {
