@@ -15,7 +15,7 @@ pub struct Vga {
     xregs: [u16; 8],
     pix_rx: Receiver<PixEvent>,
     backchannel_tx: Sender<Backchannel>,
-    framebuffer: Arc<Mutex<Vec<u8>>>,
+    framebuffer: Arc<Mutex<(u32, u32, Vec<u8>)>>,
     frame_count: u8,
 }
 
@@ -23,7 +23,7 @@ impl Vga {
     pub fn new(
         pix_rx: Receiver<PixEvent>,
         backchannel_tx: Sender<Backchannel>,
-        framebuffer: Arc<Mutex<Vec<u8>>>,
+        framebuffer: Arc<Mutex<(u32, u32, Vec<u8>)>>,
     ) -> Self {
         let canvas_width = 640;
         let canvas_height = 480;
@@ -170,7 +170,7 @@ impl Vga {
         }
 
         if let Ok(mut fb) = self.framebuffer.lock() {
-            *fb = rgba_bytes;
+            *fb = (w as u32, h as u32, rgba_bytes);
         }
     }
 }
