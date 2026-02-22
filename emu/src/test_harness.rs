@@ -151,7 +151,7 @@ pub fn generate_test_trace(mode: TestMode) -> Vec<BusTransaction> {
     trace.push(BusTransaction::write(cycle, 0xFFE7, (data_ptr >> 8) as u8));
     cycle += 1;
 
-    let bytes_per_row = ((bmp_w as u32 * bpp as u32) + 7) / 8;
+    let bytes_per_row = (bmp_w as u32 * bpp as u32).div_ceil(8);
 
     for y in 0..bmp_h as u32 {
         for byte_x in 0..bytes_per_row {
@@ -213,7 +213,7 @@ fn pattern_byte(byte_x: u32, y: u32, bpp: u16, width: u32) -> u8 {
             let mut byte = 0u8;
             for bit in 0..8u32 {
                 let px = base_px + bit;
-                if px < width && ((px + y) % 2 == 0) {
+                if px < width && (px + y).is_multiple_of(2) {
                     byte |= 1 << (7 - bit); // MSB-first
                 }
             }
@@ -263,7 +263,7 @@ fn pattern_byte(byte_x: u32, y: u32, bpp: u16, width: u32) -> u8 {
             let b5 = ((px + y) % 32) as u16;
             let alpha = 1u16 << 5;
             let color: u16 = (b5 << 11) | (g5 << 6) | alpha | r5;
-            if byte_x % 2 == 0 {
+            if byte_x.is_multiple_of(2) {
                 (color & 0xFF) as u8  // low byte first (little-endian)
             } else {
                 (color >> 8) as u8    // high byte second

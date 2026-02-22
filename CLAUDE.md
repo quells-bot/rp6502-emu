@@ -67,12 +67,12 @@ The MVP emulator is implemented in `emu/`. Run with `cargo run` from that direct
 | `src/vga/palette.rs` | Built-in palettes: 2-color (1bpp) and ANSI 256-color |
 | `src/vga/mode3.rs` | Mode 3 bitmap renderer (all color depths) |
 | `src/vga/mod.rs` | VGA state machine: PIX receiver, frame renderer, backchannel |
-| `src/test_harness.rs` | `generate_gradient_trace()` — 320×200 8bpp gradient on 640×480 canvas |
+| `src/test_harness.rs` | `generate_test_trace(TestMode)` — test pattern traces for all canvas/bpp combinations |
 | `src/main.rs` | Wires threads: RIA + VGA + egui |
 
 ### Shared framebuffer type
 
-`Arc<Mutex<(u32, u32, Vec<u8>)>>` — width, height, RGBA bytes. Written by VGA thread on every FrameSync; read by egui each repaint.
+`Arc<Mutex<Vec<u8>>>` — always 640×480 RGBA bytes (614,400 bytes). Written by VGA thread on every FrameSync; read by egui each repaint. Dimensions are fixed so no size field is needed.
 
 ### Key implementation notes
 
@@ -80,3 +80,4 @@ The MVP emulator is implemented in `emu/`. Run with `cargo run` from that direct
 - **PICO_SCANVIDEO pixel format**: R5 at bits 4:0, alpha at bit 5, G5 at bits 10:6, B5 at bits 15:11 (not standard RGB565).
 - **xreg register mapping**: first-pushed data → lowest register; `handle_xreg` iterates `for i in 0..count` with `offset = xstack_ptr + (count-1-i)*2`.
 - **320×200 bitmap**: test harness uses 320×200 pixels (64 000 bytes) to fit in 64 KB XRAM; canvas register still sets 640×480 display.
+- **Pixel doubling**: 320-wide canvases are 2x pixel-doubled by the VGA thread (each pixel written twice horizontally) to fill the 640×480 display framebuffer.
