@@ -79,5 +79,4 @@ The MVP emulator is implemented in `emu/`. Run with `cargo run` from that direct
 - **xreg byte order**: push hi byte first so lo byte lands at lower XRAM address, matching `from_le_bytes` in `handle_xreg`.
 - **PICO_SCANVIDEO pixel format**: R5 at bits 4:0, alpha at bit 5, G5 at bits 10:6, B5 at bits 15:11 (not standard RGB565).
 - **xreg register mapping**: first-pushed data → lowest register; `handle_xreg` iterates `for i in 0..count` with `offset = xstack_ptr + (count-1-i)*2`.
-- **320×200 bitmap**: test harness uses 320×200 pixels (64 000 bytes) to fit in 64 KB XRAM; canvas register still sets 640×480 display.
 - **Pixel doubling**: 320-wide canvases are 2x pixel-doubled by the VGA thread (each pixel written twice horizontally) to fill the 640×480 display framebuffer.
