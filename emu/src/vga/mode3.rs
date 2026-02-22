@@ -178,12 +178,12 @@ fn get_pixel(data: &[u8], col: usize, format: &ColorFormat) -> u8 {
         // 4bpp MSB: high nibble is even pixel, low nibble is odd pixel
         ColorFormat::Bpp4Msb => {
             let byte = data[col / 2];
-            if col % 2 == 0 { byte >> 4 } else { byte & 0x0F }
+            if col.is_multiple_of(2) { byte >> 4 } else { byte & 0x0F }
         }
         // 4bpp LSB: low nibble is even pixel, high nibble is odd pixel
         ColorFormat::Bpp4Lsb => {
             let byte = data[col / 2];
-            if col % 2 == 0 { byte & 0x0F } else { byte >> 4 }
+            if col.is_multiple_of(2) { byte & 0x0F } else { byte >> 4 }
         }
         // 2bpp MSB: bits[7:6]=px0, bits[5:4]=px1, bits[3:2]=px2, bits[1:0]=px3
         ColorFormat::Bpp2Msb => {
@@ -242,7 +242,7 @@ pub fn render_mode3(
     }
 
     let bpp = plane.format.bits_per_pixel();
-    let sizeof_row = ((cfg.width_px as u32 * bpp + 7) / 8) as usize;
+    let sizeof_row = (cfg.width_px as u32 * bpp).div_ceil(8) as usize;
 
     // Bounds check: entire bitmap must fit in XRAM, matching firmware check:
     //   sizeof_bitmap > 0x10000 - config->xram_data_ptr
@@ -265,7 +265,7 @@ pub fn render_mode3(
             continue;
         }
 
-        let mut row = scanline as i32 - cfg.y_pos_px as i32;
+        let mut row = scanline - cfg.y_pos_px as i32;
 
         // Y wrapping — mirrors firmware mode3_scanline_to_data():
         //   if (row < 0) row += (-(row+1)/height + 1) * height;

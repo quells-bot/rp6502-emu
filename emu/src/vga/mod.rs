@@ -42,11 +42,8 @@ impl Vga {
 
     /// Run the VGA event loop. Call from a dedicated thread.
     pub fn run(&mut self) {
-        loop {
-            match self.pix_rx.recv() {
-                Ok(event) => self.handle_event(event),
-                Err(_) => break, // channel disconnected
-            }
+        while let Ok(event) = self.pix_rx.recv() {
+            self.handle_event(event);
         }
     }
 
@@ -126,7 +123,7 @@ impl Vga {
         let scanline_begin = self.xregs[5];
         let scanline_end = self.xregs[6];
 
-        if plane_idx >= 3 {
+        if plane_idx >= 3 || config_ptr & 1 != 0 {
             return;
         }
 
@@ -156,13 +153,11 @@ impl Vga {
         let mut fb_rgba = vec![0u32; pixel_count];
 
         // Render each plane in order (0 = back, 2 = front)
-        for plane_opt in &self.planes {
-            if let Some(plane) = plane_opt {
-                // Re-read config from XRAM each frame (pixel data may have changed)
-                let mut current_plane = plane.clone();
-                current_plane.config = Mode3Config::from_xram(&self.xram, plane.config_ptr);
-                render_mode3(&current_plane, &self.xram, &mut fb_rgba, w, h);
-            }
+        for plane in self.planes.iter().flatten() {
+            // Re-read config from XRAM each frame (pixel data may have changed)
+            let fresh_config = Mode3Config::from_xram(&self.xram, plane.config_ptr);
+            let current_plane = Mode3Plane { config: fresh_config, ..plane.clone() };
+            render_mode3(&current_plane, &self.xram, &mut fb_rgba, w, h);
         }
 
         // Convert u32 RGBA to u8 RGBA for egui
