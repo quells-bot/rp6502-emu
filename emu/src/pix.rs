@@ -32,6 +32,8 @@ pub enum Backchannel {
 /// Pack a PIX message into the 32-bit hardware format.
 /// Format: [31:29]=device, [28]=1 (framing), [27:24]=channel, [23:16]=register, [15:0]=value
 pub fn pix_pack(device: u8, channel: u8, register: u8, value: u16) -> u32 {
+    debug_assert!(device < 8, "PIX device must be 0-7");
+    debug_assert!(channel < 16, "PIX channel must be 0-15");
     0x1000_0000
         | ((device as u32) << 29)
         | ((channel as u32) << 24)

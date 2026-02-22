@@ -23,6 +23,7 @@ impl BusTransaction {
     }
 
     /// Returns the RIA register index (0-31) for this address.
+    /// Caller must ensure `hits_ria()` is true before calling this.
     pub fn ria_reg(&self) -> u8 {
         (self.addr & 0x1F) as u8
     }
