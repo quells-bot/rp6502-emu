@@ -15,7 +15,7 @@ pub struct Vga {
     xregs: [u16; 8],
     pix_rx: Receiver<PixEvent>,
     backchannel_tx: Sender<Backchannel>,
-    framebuffer: Arc<Mutex<(u32, u32, Vec<u8>)>>,
+    framebuffer: Arc<Mutex<Vec<u8>>>,
     frame_count: u8,
 }
 
@@ -23,7 +23,7 @@ impl Vga {
     pub fn new(
         pix_rx: Receiver<PixEvent>,
         backchannel_tx: Sender<Backchannel>,
-        framebuffer: Arc<Mutex<(u32, u32, Vec<u8>)>>,
+        framebuffer: Arc<Mutex<Vec<u8>>>,
     ) -> Self {
         let canvas_width = 640;
         let canvas_height = 480;
@@ -149,28 +149,31 @@ impl Vga {
         let h = self.canvas_height;
         let pixel_count = w as usize * h as usize;
 
-        // Black background (zero = transparent/black for all palettes)
         let mut fb_rgba = vec![0u32; pixel_count];
 
-        // Render each plane in order (0 = back, 2 = front)
         for plane in self.planes.iter().flatten() {
-            // Re-read config from XRAM each frame (pixel data may have changed)
             let fresh_config = Mode3Config::from_xram(&self.xram, plane.config_ptr);
             let current_plane = Mode3Plane { config: fresh_config, ..plane.clone() };
             render_mode3(&current_plane, &self.xram, &mut fb_rgba, w, h);
         }
 
-        // Convert u32 RGBA to u8 RGBA for egui
-        let mut rgba_bytes = vec![0u8; pixel_count * 4];
-        for (i, &pixel) in fb_rgba.iter().enumerate() {
-            rgba_bytes[i * 4]     = (pixel >> 24) as u8; // R
-            rgba_bytes[i * 4 + 1] = (pixel >> 16) as u8; // G
-            rgba_bytes[i * 4 + 2] = (pixel >> 8)  as u8; // B
-            rgba_bytes[i * 4 + 3] = (pixel & 0xFF) as u8; // A
+        // Convert and write to fixed 640x480 display buffer
+        // For now: 1:1 copy into top-left, rest stays black
+        let mut display = vec![0u8; 640 * 480 * 4];
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                let src = y * w as usize + x;
+                let dst = y * 640 + x;
+                let pixel = fb_rgba[src];
+                display[dst * 4]     = (pixel >> 24) as u8;
+                display[dst * 4 + 1] = (pixel >> 16) as u8;
+                display[dst * 4 + 2] = (pixel >> 8)  as u8;
+                display[dst * 4 + 3] = (pixel & 0xFF) as u8;
+            }
         }
 
         if let Ok(mut fb) = self.framebuffer.lock() {
-            *fb = (w as u32, h as u32, rgba_bytes);
+            *fb = display;
         }
     }
 }

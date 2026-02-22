@@ -17,9 +17,9 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
 
-    // Shared framebuffer: (width, height, RGBA bytes)
-    let framebuffer: Arc<Mutex<(u32, u32, Vec<u8>)>> =
-        Arc::new(Mutex::new((640, 480, vec![0u8; 640 * 480 * 4])));
+    // Shared framebuffer: always 640x480 RGBA bytes
+    let framebuffer: Arc<Mutex<Vec<u8>>> =
+        Arc::new(Mutex::new(vec![0u8; 640 * 480 * 4]));
 
     // PIX channel (RIA -> VGA) and backchannel (VGA -> RIA)
     let (pix_tx, pix_rx) = crossbeam_channel::unbounded();
@@ -58,7 +58,7 @@ fn main() -> eframe::Result {
 }
 
 struct EmulatorApp {
-    framebuffer: Arc<Mutex<(u32, u32, Vec<u8>)>>,
+    framebuffer: Arc<Mutex<Vec<u8>>>,
     texture: Option<egui::TextureHandle>,
 }
 
@@ -67,15 +67,15 @@ impl eframe::App for EmulatorApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("RP6502 Emulator");
 
-            // Snapshot the framebuffer
-            let (fw, fh, pixels) = if let Ok(fb) = self.framebuffer.lock() {
-                (fb.0, fb.1, fb.2.clone())
+            // Snapshot the framebuffer (always 640x480)
+            let pixels = if let Ok(fb) = self.framebuffer.lock() {
+                fb.clone()
             } else {
-                (640u32, 480u32, vec![0u8; 640 * 480 * 4])
+                vec![0u8; 640 * 480 * 4]
             };
 
             let image = egui::ColorImage::from_rgba_unmultiplied(
-                [fw as usize, fh as usize],
+                [640, 480],
                 &pixels,
             );
 
