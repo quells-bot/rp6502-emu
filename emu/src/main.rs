@@ -1,5 +1,6 @@
 mod bus;
 mod pix;
+mod vga;
 
 use eframe::egui;
 
