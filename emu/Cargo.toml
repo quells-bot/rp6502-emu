@@ -1,0 +1,14 @@
+[package]
+name = "rp6502-emu"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = { version = "0.33", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+crossbeam-channel = "0.5"
+bytemuck = { version = "1", features = ["derive"] }
