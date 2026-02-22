@@ -52,3 +52,31 @@ Full design at `docs/plans/2026-02-21-emulator-design.md`. Covers register behav
 - `eframe` / `egui` for windowed framebuffer display
 - `crossbeam-channel` for PIX bus and backchannel
 - `bytemuck` for zero-copy framebuffer casting
+
+## Emulator Source (`emu/`)
+
+The MVP emulator is implemented in `emu/`. Run with `cargo run` from that directory.
+
+### Module layout
+
+| File | Description |
+|------|-------------|
+| `src/bus.rs` | `BusTransaction` — single 6502 bus cycle |
+| `src/pix.rs` | PIX protocol types and pack/unpack helpers |
+| `src/ria.rs` | RIA state machine: register file, XRAM portals, XSTACK, PIX emission |
+| `src/vga/palette.rs` | Built-in palettes: 2-color (1bpp) and ANSI 256-color |
+| `src/vga/mode3.rs` | Mode 3 bitmap renderer (all color depths) |
+| `src/vga/mod.rs` | VGA state machine: PIX receiver, frame renderer, backchannel |
+| `src/test_harness.rs` | `generate_gradient_trace()` — 320×200 8bpp gradient on 640×480 canvas |
+| `src/main.rs` | Wires threads: RIA + VGA + egui |
+
+### Shared framebuffer type
+
+`Arc<Mutex<(u32, u32, Vec<u8>)>>` — width, height, RGBA bytes. Written by VGA thread on every FrameSync; read by egui each repaint.
+
+### Key implementation notes
+
+- **xreg byte order**: push hi byte first so lo byte lands at lower XRAM address, matching `from_le_bytes` in `handle_xreg`.
+- **PICO_SCANVIDEO pixel format**: R5 at bits 4:0, alpha at bit 5, G5 at bits 10:6, B5 at bits 15:11 (not standard RGB565).
+- **xreg register mapping**: first-pushed data → lowest register; `handle_xreg` iterates `for i in 0..count` with `offset = xstack_ptr + (count-1-i)*2`.
+- **320×200 bitmap**: test harness uses 320×200 pixels (64 000 bytes) to fit in 64 KB XRAM; canvas register still sets 640×480 display.
