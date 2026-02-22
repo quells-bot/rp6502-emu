@@ -25,8 +25,6 @@ pub struct Ria {
     cycles_per_frame: u64,
     /// Cycle count of next frame boundary.
     next_frame_cycle: u64,
-    /// Frame counter for VSYNC backchannel.
-    frame_count: u8,
     /// PIX transmit channel (RIA -> VGA).
     pix_tx: Sender<PixEvent>,
     /// Backchannel receive (VGA -> RIA).
@@ -53,7 +51,6 @@ impl Ria {
             phi2_freq,
             cycles_per_frame,
             next_frame_cycle: cycles_per_frame,
-            frame_count: 0,
             pix_tx,
             backchannel_rx,
             running: true,
@@ -385,7 +382,7 @@ impl Ria {
     ///   [XSTACK_SIZE-3] = start_addr
     ///   [XSTACK_SIZE-4..xstack_ptr] = uint16 data values (pairs of bytes)
     ///
-    /// Data is sent in REVERSE order: highest address register first, counting down.
+    /// Data mapping: first-pushed (highest offset) -> lowest register, last-pushed (lowest offset) -> highest register.
     fn handle_xreg(&mut self) {
         if self.xstack_ptr >= XSTACK_SIZE - 3 {
             self.api_return_ax(0xFFFF);
@@ -397,17 +394,19 @@ impl Ria {
         let start_addr = self.xstack[XSTACK_SIZE - 3];
         let data_bytes = XSTACK_SIZE - self.xstack_ptr - 3;
 
-        if data_bytes < 2 || data_bytes % 2 != 0 || device > 7 || channel > 15 {
+        if data_bytes < 2 || !data_bytes.is_multiple_of(2) || device > 7 || channel > 15 {
             self.api_return_ax(0xFFFF);
             return;
         }
 
         let count = data_bytes / 2;
 
-        // Send in reverse order (highest register first, counting down)
-        // This matches firmware: pix_send(dev, ch, addr + --count, data)
-        for i in (0..count).rev() {
-            let offset = self.xstack_ptr + i * 2;
+        // Send in order: first-pushed data (at highest offset) -> lowest register (start_addr+0),
+        // last-pushed data (at xstack_ptr) -> highest register (start_addr + count - 1).
+        // This matches firmware: api_pop_uint16 pops from xstack_ptr upward (last-pushed first),
+        // and pix_send uses addr + --pix_send_count (counting from highest down to 0).
+        for i in 0..count {
+            let offset = self.xstack_ptr + (count - 1 - i) * 2;
             let value = u16::from_le_bytes([
                 self.xstack[offset],
                 self.xstack[offset + 1],
