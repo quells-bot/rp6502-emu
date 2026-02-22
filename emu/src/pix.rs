@@ -31,6 +31,7 @@ pub enum Backchannel {
 
 /// Pack a PIX message into the 32-bit hardware format.
 /// Format: [31:29]=device, [28]=1 (framing), [27:24]=channel, [23:16]=register, [15:0]=value
+#[allow(dead_code)]
 pub fn pix_pack(device: u8, channel: u8, register: u8, value: u16) -> u32 {
     debug_assert!(device < 8, "PIX device must be 0-7");
     debug_assert!(channel < 16, "PIX channel must be 0-15");
@@ -42,6 +43,7 @@ pub fn pix_pack(device: u8, channel: u8, register: u8, value: u16) -> u32 {
 }
 
 /// Unpack a 32-bit PIX message. Returns None if framing bit is not set.
+#[allow(dead_code)]
 pub fn pix_unpack(raw: u32) -> Option<(u8, u8, u8, u16)> {
     if raw & 0x1000_0000 == 0 {
         return None;
@@ -56,6 +58,7 @@ pub fn pix_unpack(raw: u32) -> Option<(u8, u8, u8, u16)> {
 /// Pack an XRAM write into PIX format.
 /// Matches firmware: PIX_SEND_XRAM(addr, data) = PIX_MESSAGE(0, 0, data, addr)
 /// Note: data goes in the register field (bits 23:16), addr in value field (bits 15:0).
+#[allow(dead_code)]
 pub fn pix_pack_xram(addr: u16, data: u8) -> u32 {
     pix_pack(0, 0, data, addr)
 }

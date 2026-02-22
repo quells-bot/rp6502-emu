@@ -13,6 +13,7 @@ impl BusTransaction {
         Self { cycle, addr, data, rw: false }
     }
 
+    #[allow(dead_code)]
     pub fn read(cycle: u64, addr: u16, data: u8) -> Self {
         Self { cycle, addr, data, rw: true }
     }

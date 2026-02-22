@@ -20,6 +20,7 @@ pub struct Ria {
     /// Current PHI2 cycle count.
     pub cycle_count: u64,
     /// PHI2 frequency in Hz (default 8 MHz).
+    #[allow(dead_code)]
     pub phi2_freq: u64,
     /// Cycles per frame (phi2_freq / 60).
     cycles_per_frame: u64,
