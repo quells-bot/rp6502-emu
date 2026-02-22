@@ -68,14 +68,20 @@ pub const PALETTE_256: [u32; 256] = {
     p
 };
 
-/// Convert a 16-bit RGB565 value (as stored in XRAM custom palettes) to RGBA u32.
-/// The firmware uses PICO_SCANVIDEO format: bit 15 = alpha, bits 14:10 = R, 9:5 = G, 4:0 = B.
+/// Convert a 16-bit PICO_SCANVIDEO pixel value (as stored in XRAM custom palettes) to RGBA u32.
+///
+/// PICO_SCANVIDEO DPI format (from firmware scanvideo.h):
+///   RSHIFT=0:  R5 at bits  4:0
+///   GSHIFT=6:  G5 at bits 10:6
+///   BSHIFT=11: B5 at bits 15:11
+///   ALPHA_PIN=5: alpha at bit 5
+///
 /// Each 5-bit channel is scaled to 8-bit by (val << 3) | (val >> 2).
 pub fn rgb565_to_rgba(raw: u16) -> u32 {
-    let alpha = if raw & 0x8000 != 0 { 0xFF } else { 0x00 };
-    let r5 = ((raw >> 10) & 0x1F) as u8;
-    let g5 = ((raw >> 5) & 0x1F) as u8;
-    let b5 = (raw & 0x1F) as u8;
+    let alpha = if raw & (1 << 5) != 0 { 0xFF } else { 0x00 };
+    let r5 = (raw & 0x1F) as u8;
+    let g5 = ((raw >> 6) & 0x1F) as u8;
+    let b5 = ((raw >> 11) & 0x1F) as u8;
     let r = (r5 << 3) | (r5 >> 2);
     let g = (g5 << 3) | (g5 >> 2);
     let b = (b5 << 3) | (b5 >> 2);
@@ -116,17 +122,34 @@ mod tests {
 
     #[test]
     fn test_rgb565_to_rgba_white() {
-        // All bits set = alpha + white
+        // All bits set = alpha + white (all channels max)
         let rgba_val = rgb565_to_rgba(0xFFFF);
-        assert_eq!(rgba_val & 0xFF, 0xFF); // alpha
+        assert_eq!(rgba_val & 0xFF, 0xFF); // alpha (bit 5 set)
         assert_eq!((rgba_val >> 24) & 0xFF, 0xFF); // R
+        assert_eq!((rgba_val >> 16) & 0xFF, 0xFF); // G
+        assert_eq!((rgba_val >> 8) & 0xFF, 0xFF);  // B
     }
 
     #[test]
     fn test_rgb565_to_rgba_transparent() {
-        // Bit 15 clear = transparent
-        let rgba_val = rgb565_to_rgba(0x7FFF);
+        // Bit 5 clear = transparent; use a value with all channel bits set but bit 5 clear.
+        // PICO_SCANVIDEO alpha is bit 5. A pixel with R5=0x1F, G5=0x1F, B5=0x1F but no alpha:
+        // bits 4:0 = 0x1F (R), bits 10:6 = 0x1F (G -> bits 10:6 set), bits 15:11 = 0x1F (B),
+        // bit 5 = 0 (no alpha). Value = 0xFFDF (all bits set except bit 5).
+        let rgba_val = rgb565_to_rgba(0xFFDF);
         assert_eq!(rgba_val & 0xFF, 0x00); // alpha = 0
+    }
+
+    #[test]
+    fn test_rgb565_to_rgba_red_only() {
+        // Pure red: R5 = 0x1F at bits 4:0, G=0, B=0, alpha set (bit 5).
+        // raw = 0x001F | (1 << 5) = 0x003F
+        let raw: u16 = 0x003F;
+        let rgba_val = rgb565_to_rgba(raw);
+        assert_eq!(rgba_val & 0xFF, 0xFF);         // alpha opaque
+        assert_eq!((rgba_val >> 24) & 0xFF, 0xFF); // R = 0xFF (0x1F scaled)
+        assert_eq!((rgba_val >> 16) & 0xFF, 0x00); // G = 0
+        assert_eq!((rgba_val >> 8) & 0xFF, 0x00);  // B = 0
     }
 
     #[test]
