@@ -35,7 +35,7 @@ fn main() -> eframe::Result {
     // Spawn RIA thread: replay test harness trace
     thread::spawn(move || {
         let mut ria = ria::Ria::new(pix_tx, back_rx);
-        let trace = test_harness::generate_gradient_trace();
+        let trace = test_harness::generate_test_trace(test_harness::TestMode::Mono320x240);
         for txn in &trace {
             if !ria.running {
                 break;
