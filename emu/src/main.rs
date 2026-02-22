@@ -1,6 +1,7 @@
 mod bus;
 mod pix;
 mod ria;
+mod test_harness;
 mod vga;
 
 use eframe::egui;
