@@ -68,6 +68,7 @@ pub struct Mode3Plane {
     pub format: ColorFormat,
     pub scanline_begin: u16,
     pub scanline_end: u16,
+    pub config_ptr: u16,
 }
 
 impl Mode3Config {
@@ -369,6 +370,7 @@ mod tests {
             format: ColorFormat::Bpp8,
             scanline_begin: 0,
             scanline_end: 4,
+            config_ptr: 0,
         };
 
         let mut fb = vec![0u32; 4 * 4];
@@ -392,6 +394,7 @@ mod tests {
             format: ColorFormat::Bpp1Msb,
             scanline_begin: 0,
             scanline_end: 1,
+            config_ptr: 0,
         };
 
         let mut fb = vec![0u32; 8];
@@ -420,6 +423,7 @@ mod tests {
             format: ColorFormat::Bpp8,
             scanline_begin: 0,
             scanline_end: 4,
+            config_ptr: 0,
         };
 
         let mut fb = vec![0u32; 4];
