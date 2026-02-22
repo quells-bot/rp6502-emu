@@ -75,6 +75,19 @@ impl Mode3Config {
     /// The pointer must be word-aligned and leave room for the 14-byte struct.
     pub fn from_xram(xram: &[u8; 65536], ptr: u16) -> Self {
         let p = ptr as usize;
+        // Guard: struct is 14 bytes; ptr must leave room
+        if p + 14 > 65536 {
+            return Self {
+                x_wrap: false,
+                y_wrap: false,
+                x_pos_px: 0,
+                y_pos_px: 0,
+                width_px: 0,
+                height_px: 0,
+                xram_data_ptr: 0,
+                xram_palette_ptr: 0,
+            };
+        }
         Self {
             x_wrap: xram[p] != 0,
             y_wrap: xram[p + 1] != 0,
@@ -99,6 +112,9 @@ fn resolve_palette(xram: &[u8; 65536], format: &ColorFormat, palette_ptr: u16) -
         ColorFormat::Bpp16 => vec![], // direct color, no palette needed
         ColorFormat::Bpp1Msb | ColorFormat::Bpp1Lsb => {
             let count = 2usize;
+            // Note: palette_ptr == 0 is treated as "use default palette" here.
+            // The firmware would read XRAM[0] as a custom palette, but in practice
+            // programs use 0 as a null sentinel (XRAM[0] is typically the config struct).
             // Check alignment and bounds (mirrors firmware: !(ptr & 1) && fits)
             if palette_ptr & 1 == 0
                 && palette_ptr > 0
@@ -117,6 +133,12 @@ fn resolve_palette(xram: &[u8; 65536], format: &ColorFormat, palette_ptr: u16) -
         }
         _ => {
             let count = 1usize << format.bits_per_pixel();
+            // Note: the firmware uses `2 ^ bpp` here (C bitwise XOR, not exponentiation),
+            // which is a firmware bug (e.g. bpp=8 gives 10 instead of 256). We use
+            // the correct `1 << bpp` count to avoid loading garbage for large palettes.
+            // Note: palette_ptr == 0 is treated as "use default palette" here.
+            // The firmware would read XRAM[0] as a custom palette, but in practice
+            // programs use 0 as a null sentinel (XRAM[0] is typically the config struct).
             // Check alignment and bounds (mirrors firmware: !(ptr & 1) && fits)
             if palette_ptr & 1 == 0
                 && palette_ptr > 0
@@ -197,6 +219,10 @@ fn get_pixel(data: &[u8], col: usize, format: &ColorFormat) -> u8 {
 ///
 /// The framebuffer is an array of RGBA u32 values (R in bits 31:24, G in 23:16,
 /// B in 15:8, A in 7:0), laid out as canvas_width x canvas_height pixels.
+///
+/// The framebuffer must be zero-initialized before calling this function.
+/// Out-of-bounds and transparent pixels are skipped (not explicitly cleared),
+/// so stale content will show through if the caller does not clear first.
 ///
 /// Pixels are only written when alpha is non-zero (opaque), mirroring the
 /// transparency convention used throughout the palette module.
