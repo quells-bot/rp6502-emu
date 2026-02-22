@@ -1,0 +1,6 @@
+[submodule "pico-docs"]
+	path = pico-docs
+	url = https://github.com/picocomputer/picocomputer.github.io.git
+[submodule "firmware"]
+	path = firmware
+	url = https://github.com/picocomputer/rp6502.git
