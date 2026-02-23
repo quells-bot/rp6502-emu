@@ -28,6 +28,50 @@ pub enum TestMode {
     Color16bpp320,
 }
 
+impl std::fmt::Display for TestMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            TestMode::Mono640x480 => "mono640x480",
+            TestMode::Mono640x360 => "mono640x360",
+            TestMode::Mono320x240 => "mono320x240",
+            TestMode::Mono320x180 => "mono320x180",
+            TestMode::Color2bpp640x360 => "color2bpp640x360",
+            TestMode::Color2bpp320x240 => "color2bpp320x240",
+            TestMode::Color2bpp320x180 => "color2bpp320x180",
+            TestMode::Color4bpp320x240 => "color4bpp320x240",
+            TestMode::Color4bpp320x180 => "color4bpp320x180",
+            TestMode::Color8bpp320x180 => "color8bpp320x180",
+            TestMode::Color16bpp320 => "color16bpp320",
+        };
+        write!(f, "{}", name)
+    }
+}
+
+impl std::str::FromStr for TestMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "mono640x480" => Ok(TestMode::Mono640x480),
+            "mono640x360" => Ok(TestMode::Mono640x360),
+            "mono320x240" => Ok(TestMode::Mono320x240),
+            "mono320x180" => Ok(TestMode::Mono320x180),
+            "color2bpp640x360" => Ok(TestMode::Color2bpp640x360),
+            "color2bpp320x240" => Ok(TestMode::Color2bpp320x240),
+            "color2bpp320x180" => Ok(TestMode::Color2bpp320x180),
+            "color4bpp320x240" => Ok(TestMode::Color4bpp320x240),
+            "color4bpp320x180" => Ok(TestMode::Color4bpp320x180),
+            "color8bpp320x180" => Ok(TestMode::Color8bpp320x180),
+            "color16bpp320" => Ok(TestMode::Color16bpp320),
+            _ => Err(format!(
+                "unknown mode '{}'. Valid modes: {}",
+                s,
+                TestMode::all().iter().map(|m| m.to_string()).collect::<Vec<_>>().join(", ")
+            )),
+        }
+    }
+}
+
 impl TestMode {
     /// All valid modes for iteration in tests.
     pub fn all() -> &'static [TestMode] {
@@ -310,6 +354,14 @@ mod tests {
         // 640x480 at 1bpp = 640*480/8 = 38400 bytes
         let rw0_writes = trace.iter().filter(|t| t.addr == 0xFFE4).count();
         assert_eq!(rw0_writes, 14 + 38400);
+    }
+
+    #[test]
+    fn test_mode_from_str() {
+        assert!(matches!("mono640x480".parse::<TestMode>(), Ok(TestMode::Mono640x480)));
+        assert!(matches!("color8bpp320x180".parse::<TestMode>(), Ok(TestMode::Color8bpp320x180)));
+        assert!(matches!("color16bpp320".parse::<TestMode>(), Ok(TestMode::Color16bpp320)));
+        assert!("invalid".parse::<TestMode>().is_err());
     }
 
     #[test]
