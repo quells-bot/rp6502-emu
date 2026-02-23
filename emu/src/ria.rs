@@ -406,7 +406,11 @@ impl Ria {
         // last-pushed data (at xstack_ptr) -> highest register (start_addr + count - 1).
         // This matches firmware: api_pop_uint16 pops from xstack_ptr upward (last-pushed first),
         // and pix_send uses addr + --pix_send_count (counting from highest down to 0).
-        for i in 0..count {
+        // Send in descending register order (highest first), matching firmware pix_send():
+        // pix_send_addr starts at start_addr+count and decrements each cycle.
+        // This ensures CANVAS (reg 0) arrives LAST (resetting xregs after MODE reads them),
+        // and MODE (reg 1) arrives after regs 2-6 have been accumulated.
+        for i in (0..count).rev() {
             let offset = self.xstack_ptr + (count - 1 - i) * 2;
             let value = u16::from_le_bytes([
                 self.xstack[offset],

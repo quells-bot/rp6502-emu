@@ -206,17 +206,34 @@ pub fn generate_test_trace(mode: TestMode) -> Vec<BusTransaction> {
     }
 
     // --- Step 3: Configure VGA via xreg ---
-    // Push device=1, channel=0, start_addr=0 onto xstack
+    // Two separate xreg calls, matching SDK usage:
+    //   xreg(1, 0, 0, canvas)          — sets CANVAS (reg 0), resets planes
+    //   xreg(1, 0, 1, mode, attr, ...) — programs MODE (reg 1) with attrs (regs 2-6)
+
+    // First xreg: CANVAS only (device=1, channel=0, start_addr=0)
     trace.push(BusTransaction::write(cycle, 0xFFEC, 1));
     cycle += 1;
     trace.push(BusTransaction::write(cycle, 0xFFEC, 0));
     cycle += 1;
     trace.push(BusTransaction::write(cycle, 0xFFEC, 0));
     cycle += 1;
+    let canvas = mode.canvas_reg();
+    trace.push(BusTransaction::write(cycle, 0xFFEC, (canvas >> 8) as u8));
+    cycle += 1;
+    trace.push(BusTransaction::write(cycle, 0xFFEC, (canvas & 0xFF) as u8));
+    cycle += 1;
+    trace.push(BusTransaction::write(cycle, 0xFFEF, 0x01));
+    cycle += 1;
 
+    // Second xreg: MODE + attributes (device=1, channel=0, start_addr=1)
+    trace.push(BusTransaction::write(cycle, 0xFFEC, 1));
+    cycle += 1;
+    trace.push(BusTransaction::write(cycle, 0xFFEC, 0));
+    cycle += 1;
+    trace.push(BusTransaction::write(cycle, 0xFFEC, 1));
+    cycle += 1;
     // Push register values: hi byte first (so lo lands at lower XRAM address = correct LE)
-    let reg_values: [u16; 7] = [
-        mode.canvas_reg(),  // reg 0: CANVAS
+    let reg_values: [u16; 6] = [
         3,                  // reg 1: MODE = Mode 3
         mode.attr(),        // reg 2: attributes (color format)
         config_ptr,         // reg 3: config_ptr
@@ -230,8 +247,6 @@ pub fn generate_test_trace(mode: TestMode) -> Vec<BusTransaction> {
         trace.push(BusTransaction::write(cycle, 0xFFEC, (val & 0xFF) as u8));
         cycle += 1;
     }
-
-    // Trigger xreg operation: OP = 0x01
     trace.push(BusTransaction::write(cycle, 0xFFEF, 0x01));
     cycle += 1;
 
