@@ -12,3 +12,5 @@ eframe = { version = "0.33", default-features = false, features = [
 ] }
 crossbeam-channel = "0.5"
 bytemuck = { version = "1", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
+png = "0.17"
