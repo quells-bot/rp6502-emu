@@ -52,6 +52,8 @@ Full design at `docs/plans/2026-02-21-emulator-design.md`. Covers register behav
 - `eframe` / `egui` for windowed framebuffer display
 - `crossbeam-channel` for PIX bus and backchannel
 - `bytemuck` for zero-copy framebuffer casting
+- `clap` for CLI argument parsing
+- `png` for headless screenshot export
 
 ## Emulator Source (`emu/`)
 
@@ -68,7 +70,17 @@ The MVP emulator is implemented in `emu/`. Run with `cargo run` from that direct
 | `src/vga/mode3.rs` | Mode 3 bitmap renderer (all color depths) |
 | `src/vga/mod.rs` | VGA state machine: PIX receiver, frame renderer, backchannel |
 | `src/test_harness.rs` | `generate_test_trace(TestMode)` — test pattern traces for all canvas/bpp combinations |
-| `src/main.rs` | Wires threads: RIA + VGA + egui |
+| `src/screenshot.rs` | PNG encoding for headless framebuffer export |
+| `src/main.rs` | CLI (clap), wires threads: RIA + VGA + egui or headless screenshot |
+
+### CLI usage
+
+```
+cargo run                                              # launch egui window (default)
+cargo run -- screenshot --mode mono320x240 -o out.png  # headless screenshot
+```
+
+Valid `--mode` values: `mono640x480`, `mono640x360`, `mono320x240`, `mono320x180`, `color2bpp640x360`, `color2bpp320x240`, `color2bpp320x180`, `color4bpp320x240`, `color4bpp320x180`, `color8bpp320x180`, `color16bpp320`.
 
 ### Shared framebuffer type
 
