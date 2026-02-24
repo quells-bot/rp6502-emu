@@ -6,6 +6,7 @@ pub mod palette;
 use std::sync::{Arc, Mutex};
 use crossbeam_channel::{Receiver, Sender};
 use crate::pix::{Backchannel, PixEvent, PixRegWrite};
+use mode1::{Mode1Config, Mode1Format, Mode1Plane, render_mode1};
 use mode3::{ColorFormat, Mode3Config, Mode3Plane, render_mode3};
 
 /// Display output is always 640x480.
@@ -60,10 +61,17 @@ fn upscale_canvas(canvas: &[u32], canvas_w: u16, canvas_h: u16, display: &mut [u
     }
 }
 
+/// A programmed display plane, which may be Mode 1 or Mode 3.
+#[derive(Debug, Clone)]
+pub enum Plane {
+    Mode1(Mode1Plane),
+    Mode3(Mode3Plane),
+}
+
 /// VGA state machine.
 pub struct Vga {
     pub xram: Box<[u8; 65536]>,
-    pub planes: [Option<Mode3Plane>; 3],
+    pub planes: [Option<Plane>; 3],
     pub canvas_width: u16,
     pub canvas_height: u16,
     xregs: [u16; 8],
@@ -148,12 +156,18 @@ impl Vga {
                 1 => {
                     // MODE - program a graphics mode
                     let mode = reg.value;
-                    if mode == 3 {
-                        self.program_mode3();
-                        let _ = self.backchannel_tx.send(Backchannel::Ack);
-                    } else {
-                        // Only Mode 3 supported in MVP
-                        let _ = self.backchannel_tx.send(Backchannel::Nak);
+                    match mode {
+                        1 => {
+                            self.program_mode1();
+                            let _ = self.backchannel_tx.send(Backchannel::Ack);
+                        }
+                        3 => {
+                            self.program_mode3();
+                            let _ = self.backchannel_tx.send(Backchannel::Ack);
+                        }
+                        _ => {
+                            let _ = self.backchannel_tx.send(Backchannel::Nak);
+                        }
                     }
                     self.xregs = [0; 8];
                 }
@@ -190,13 +204,52 @@ impl Vga {
 
         let config = Mode3Config::from_xram(&self.xram, config_ptr);
 
-        self.planes[plane_idx] = Some(Mode3Plane {
+        self.planes[plane_idx] = Some(Plane::Mode3(Mode3Plane {
             config,
             format,
             scanline_begin,
             scanline_end,
             config_ptr,
-        });
+        }));
+    }
+
+    /// Program Mode 1 from accumulated xregs.
+    /// Same xregs layout as Mode 3:
+    ///   xregs[2] = attributes (format: font size + color depth)
+    ///   xregs[3] = config_ptr (XRAM address of Mode1Config)
+    ///   xregs[4] = plane index (0-2)
+    ///   xregs[5] = scanline_begin
+    ///   xregs[6] = scanline_end (0 = canvas height)
+    fn program_mode1(&mut self) {
+        let attr = self.xregs[2];
+        let config_ptr = self.xregs[3];
+        let plane_idx = self.xregs[4] as usize;
+        let scanline_begin = self.xregs[5];
+        let scanline_end = self.xregs[6];
+
+        if plane_idx >= 3 || config_ptr & 1 != 0 {
+            return;
+        }
+
+        // Additional firmware check: config_ptr must leave room for the 16-byte struct
+        if config_ptr as usize + 16 > 0x10000 {
+            return;
+        }
+
+        let format = match Mode1Format::from_attr(attr) {
+            Some(f) => f,
+            None => return,
+        };
+
+        let config = Mode1Config::from_xram(&self.xram, config_ptr);
+
+        self.planes[plane_idx] = Some(Plane::Mode1(Mode1Plane {
+            config,
+            format,
+            scanline_begin,
+            scanline_end,
+            config_ptr,
+        }));
     }
 
     /// Render all planes to the framebuffer.
@@ -210,9 +263,18 @@ impl Vga {
 
         // Render each plane into canvas buffer
         for plane in self.planes.iter().flatten() {
-            let fresh_config = Mode3Config::from_xram(&self.xram, plane.config_ptr);
-            let current_plane = Mode3Plane { config: fresh_config, ..plane.clone() };
-            render_mode3(&current_plane, &self.xram, &mut self.canvas_buf[..pixel_count], w, h);
+            match plane {
+                Plane::Mode1(p) => {
+                    let fresh_config = Mode1Config::from_xram(&self.xram, p.config_ptr);
+                    let current_plane = Mode1Plane { config: fresh_config, ..p.clone() };
+                    render_mode1(&current_plane, &self.xram, &mut self.canvas_buf[..pixel_count], w, h);
+                }
+                Plane::Mode3(p) => {
+                    let fresh_config = Mode3Config::from_xram(&self.xram, p.config_ptr);
+                    let current_plane = Mode3Plane { config: fresh_config, ..p.clone() };
+                    render_mode3(&current_plane, &self.xram, &mut self.canvas_buf[..pixel_count], w, h);
+                }
+            }
         }
 
         // Upscale canvas to 640x480 display buffer
