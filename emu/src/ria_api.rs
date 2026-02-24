@@ -66,6 +66,29 @@ impl TraceBuilder {
     pub fn wait_frames(&mut self, n: u32) {
         self.cycle += n as u64 * 200_000;
     }
+
+    /// Send xreg operation — mirrors `xreg(device, channel, addr, ...)`.
+    /// Pushes header and values to xstack, then triggers OP_XREG (0x01).
+    pub fn xreg(&mut self, device: u8, channel: u8, addr: u8, values: &[u16]) {
+        self.write(0xFFEC, device);
+        self.write(0xFFEC, channel);
+        self.write(0xFFEC, addr);
+        for &val in values {
+            self.write(0xFFEC, (val >> 8) as u8);  // hi byte first
+            self.write(0xFFEC, (val & 0xFF) as u8); // lo byte second
+        }
+        self.write(0xFFEF, 0x01); // OP_XREG
+    }
+
+    /// Set VGA canvas — mirrors `xreg_vga_canvas(value)`.
+    pub fn xreg_vga_canvas(&mut self, value: u16) {
+        self.xreg(1, 0, 0, &[value]);
+    }
+
+    /// Set VGA mode registers — mirrors `xreg_vga_mode(...)`.
+    pub fn xreg_vga_mode(&mut self, values: &[u16]) {
+        self.xreg(1, 0, 1, values);
+    }
 }
 
 #[cfg(test)]
@@ -156,5 +179,54 @@ mod tests {
         assert_eq!(tb.cycle, 1 + 400_000);
         tb.write(0xFFE4, 0x01);
         assert_eq!(tb.trace.last().unwrap().cycle, 1 + 400_000);
+    }
+
+    #[test]
+    fn test_xreg_single_value() {
+        let mut tb = TraceBuilder::new();
+        tb.xreg(1, 0, 0, &[3]); // xreg(1, 0, 0, 3) — set CANVAS to 3
+        // xstack pushes: device(1) + channel(1) + addr(1) + 1 value * 2 bytes = 5
+        // + trigger write = 6 total
+        assert_eq!(tb.trace.len(), 6);
+        assert_eq!(tb.trace[0], BusTransaction::write(0, 0xFFEC, 1));    // device
+        assert_eq!(tb.trace[1], BusTransaction::write(1, 0xFFEC, 0));    // channel
+        assert_eq!(tb.trace[2], BusTransaction::write(2, 0xFFEC, 0));    // start_addr
+        assert_eq!(tb.trace[3], BusTransaction::write(3, 0xFFEC, 0));    // hi byte of 3
+        assert_eq!(tb.trace[4], BusTransaction::write(4, 0xFFEC, 3));    // lo byte of 3
+        assert_eq!(tb.trace[5], BusTransaction::write(5, 0xFFEF, 0x01)); // trigger
+    }
+
+    #[test]
+    fn test_xreg_multiple_values() {
+        let mut tb = TraceBuilder::new();
+        tb.xreg(1, 0, 1, &[1, 3, 0xFF00]);
+        // 3 header + 3 values * 2 bytes + 1 trigger = 10
+        assert_eq!(tb.trace.len(), 10);
+        // Check the value bytes: each is hi then lo
+        assert_eq!(tb.trace[3], BusTransaction::write(3, 0xFFEC, 0));      // hi of 1
+        assert_eq!(tb.trace[4], BusTransaction::write(4, 0xFFEC, 1));      // lo of 1
+        assert_eq!(tb.trace[5], BusTransaction::write(5, 0xFFEC, 0));      // hi of 3
+        assert_eq!(tb.trace[6], BusTransaction::write(6, 0xFFEC, 3));      // lo of 3
+        assert_eq!(tb.trace[7], BusTransaction::write(7, 0xFFEC, 0xFF));   // hi of 0xFF00
+        assert_eq!(tb.trace[8], BusTransaction::write(8, 0xFFEC, 0x00));   // lo of 0xFF00
+        assert_eq!(tb.trace[9], BusTransaction::write(9, 0xFFEF, 0x01));   // trigger
+    }
+
+    #[test]
+    fn test_xreg_vga_canvas() {
+        let mut tb = TraceBuilder::new();
+        tb.xreg_vga_canvas(3);
+        assert_eq!(tb.trace.len(), 6);
+        assert_eq!(tb.trace[0].data, 1);  // device = VGA
+        assert_eq!(tb.trace[1].data, 0);  // channel = 0
+        assert_eq!(tb.trace[2].data, 0);  // start_addr = 0 (CANVAS)
+    }
+
+    #[test]
+    fn test_xreg_vga_mode() {
+        let mut tb = TraceBuilder::new();
+        tb.xreg_vga_mode(&[3, 0, 0x0000, 0, 0, 0]);
+        assert_eq!(tb.trace.len(), 16); // 3 header + 6*2 values + 1 trigger
+        assert_eq!(tb.trace[2].data, 1);  // start_addr = 1 (MODE)
     }
 }
