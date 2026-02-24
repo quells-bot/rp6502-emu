@@ -26,6 +26,10 @@ pub enum TestMode {
     Color8bpp320x180,
     /// 320x240 canvas (2x), 16bpp partial: 320x102 bitmap (~65KB)
     Color16bpp320,
+    /// 320x240 canvas, Mode 1, 1bpp 8x16 font (40x15 chars)
+    Text1bpp320x240,
+    /// 320x240 canvas, Mode 1, 8bpp 8x8 font (40x30 chars)
+    Text8bpp320x240,
 }
 
 impl std::fmt::Display for TestMode {
@@ -42,6 +46,8 @@ impl std::fmt::Display for TestMode {
             TestMode::Color4bpp320x180 => "color4bpp320x180",
             TestMode::Color8bpp320x180 => "color8bpp320x180",
             TestMode::Color16bpp320 => "color16bpp320",
+            TestMode::Text1bpp320x240 => "text1bpp320x240",
+            TestMode::Text8bpp320x240 => "text8bpp320x240",
         };
         write!(f, "{}", name)
     }
@@ -63,6 +69,8 @@ impl std::str::FromStr for TestMode {
             "color4bpp320x180" => Ok(TestMode::Color4bpp320x180),
             "color8bpp320x180" => Ok(TestMode::Color8bpp320x180),
             "color16bpp320" => Ok(TestMode::Color16bpp320),
+            "text1bpp320x240" => Ok(TestMode::Text1bpp320x240),
+            "text8bpp320x240" => Ok(TestMode::Text8bpp320x240),
             _ => Err(format!(
                 "unknown mode '{}'. Valid modes: {}",
                 s,
@@ -87,6 +95,8 @@ impl TestMode {
             TestMode::Color4bpp320x180,
             TestMode::Color8bpp320x180,
             TestMode::Color16bpp320,
+            TestMode::Text1bpp320x240,
+            TestMode::Text8bpp320x240,
         ]
     }
 
@@ -99,6 +109,7 @@ impl TestMode {
             | TestMode::Color4bpp320x180 | TestMode::Color8bpp320x180 => 2,  // 320x180
             TestMode::Mono640x480 => 3,  // 640x480
             TestMode::Mono640x360 | TestMode::Color2bpp640x360 => 4,  // 640x360
+            TestMode::Text1bpp320x240 | TestMode::Text8bpp320x240 => unreachable!(),
         }
     }
 
@@ -123,6 +134,7 @@ impl TestMode {
             TestMode::Color4bpp320x240 | TestMode::Color4bpp320x180 => 4,
             TestMode::Color8bpp320x180 => 8,
             TestMode::Color16bpp320 => 16,
+            TestMode::Text1bpp320x240 | TestMode::Text8bpp320x240 => unreachable!(),
         }
     }
 
@@ -152,6 +164,120 @@ impl TestMode {
     }
 }
 
+/// Generate a bus trace that programs Mode 1 with a test pattern.
+///
+/// The trace:
+/// 1. Writes a Mode1Config struct to XRAM at address 0x0000 via ADDR0/RW0
+/// 2. Writes character data at address 0x0100 via ADDR0/RW0
+/// 3. Configures VGA via xreg: CANVAS, MODE=1, attr, config_ptr=0
+/// 4. Exits after one frame worth of cycles
+pub fn generate_mode1_test_trace(mode: TestMode) -> Vec<BusTransaction> {
+    let mut trace = Vec::new();
+    let mut cycle: u64 = 0;
+
+    let config_ptr: u16 = 0x0000;
+    let data_ptr: u16 = 0x0100;
+
+    let (width_chars, height_chars, attr, cell_size): (i16, i16, u16, usize) = match mode {
+        TestMode::Text1bpp320x240 => (40, 15, 8, 1),   // 8x16, 1bpp
+        TestMode::Text8bpp320x240 => (40, 30, 3, 3),   // 8x8, 8bpp
+        _ => panic!("Not a Mode 1 test mode"),
+    };
+
+    // --- Step 1: Write Mode1Config (16 bytes) to XRAM ---
+    trace.push(BusTransaction::write(cycle, 0xFFE6, (config_ptr & 0xFF) as u8));
+    cycle += 1;
+    trace.push(BusTransaction::write(cycle, 0xFFE7, (config_ptr >> 8) as u8));
+    cycle += 1;
+
+    let config_bytes: [u8; 16] = [
+        0, 0,                                                          // x_wrap=false, y_wrap=false
+        0, 0,                                                          // x_pos_px = 0
+        0, 0,                                                          // y_pos_px = 0
+        (width_chars & 0xFF) as u8, (width_chars >> 8) as u8,         // width_chars
+        (height_chars & 0xFF) as u8, (height_chars >> 8) as u8,       // height_chars
+        (data_ptr & 0xFF) as u8, (data_ptr >> 8) as u8,               // xram_data_ptr
+        0xFF, 0xFF,                                                     // xram_palette_ptr = 0xFFFF (built-in)
+        0xFF, 0xFF,                                                     // xram_font_ptr = 0xFFFF (built-in)
+    ];
+    for &b in &config_bytes {
+        trace.push(BusTransaction::write(cycle, 0xFFE4, b));
+        cycle += 1;
+    }
+
+    // --- Step 2: Write character data ---
+    trace.push(BusTransaction::write(cycle, 0xFFE6, (data_ptr & 0xFF) as u8));
+    cycle += 1;
+    trace.push(BusTransaction::write(cycle, 0xFFE7, (data_ptr >> 8) as u8));
+    cycle += 1;
+
+    for row in 0..height_chars as u32 {
+        for col in 0..width_chars as u32 {
+            // Cycle through printable ASCII glyphs
+            let glyph = 0x21 + ((row * width_chars as u32 + col) % 94) as u8; // '!' to '~'
+            trace.push(BusTransaction::write(cycle, 0xFFE4, glyph));
+            cycle += 1;
+
+            if cell_size >= 2 {
+                // 8bpp: fg_index, bg_index
+                let fg = (1 + (col % 15)) as u8;       // colors 1-15 (avoid 0 = transparent)
+                let bg = 16;                             // opaque black (grey0)
+                trace.push(BusTransaction::write(cycle, 0xFFE4, fg));
+                cycle += 1;
+                if cell_size >= 3 {
+                    trace.push(BusTransaction::write(cycle, 0xFFE4, bg));
+                    cycle += 1;
+                }
+            }
+        }
+    }
+
+    // --- Step 3: Configure VGA via xreg ---
+    // First xreg: CANVAS (320x240 = canvas value 1)
+    trace.push(BusTransaction::write(cycle, 0xFFEC, 1)); // device
+    cycle += 1;
+    trace.push(BusTransaction::write(cycle, 0xFFEC, 0)); // channel
+    cycle += 1;
+    trace.push(BusTransaction::write(cycle, 0xFFEC, 0)); // start_addr
+    cycle += 1;
+    let canvas: u16 = 1; // 320x240
+    trace.push(BusTransaction::write(cycle, 0xFFEC, (canvas >> 8) as u8));
+    cycle += 1;
+    trace.push(BusTransaction::write(cycle, 0xFFEC, (canvas & 0xFF) as u8));
+    cycle += 1;
+    trace.push(BusTransaction::write(cycle, 0xFFEF, 0x01)); // trigger xreg
+    cycle += 1;
+
+    // Second xreg: MODE=1 + attributes
+    trace.push(BusTransaction::write(cycle, 0xFFEC, 1)); // device
+    cycle += 1;
+    trace.push(BusTransaction::write(cycle, 0xFFEC, 0)); // channel
+    cycle += 1;
+    trace.push(BusTransaction::write(cycle, 0xFFEC, 1)); // start_addr=1 (MODE register)
+    cycle += 1;
+    let reg_values: [u16; 6] = [
+        1,              // reg 1: MODE = Mode 1 (Character)
+        attr,           // reg 2: attributes
+        config_ptr,     // reg 3: config_ptr
+        0,              // reg 4: plane = 0
+        0,              // reg 5: scanline_begin = 0
+        0,              // reg 6: scanline_end = 0 (= canvas height)
+    ];
+    for &val in &reg_values {
+        trace.push(BusTransaction::write(cycle, 0xFFEC, (val >> 8) as u8));
+        cycle += 1;
+        trace.push(BusTransaction::write(cycle, 0xFFEC, (val & 0xFF) as u8));
+        cycle += 1;
+    }
+    trace.push(BusTransaction::write(cycle, 0xFFEF, 0x01)); // trigger xreg
+    cycle += 1;
+
+    // Wait one frame then exit
+    trace.push(BusTransaction::write(cycle + 200_000, 0xFFEF, 0xFF));
+
+    trace
+}
+
 /// Generate a bus trace that programs Mode 3 with a test pattern.
 ///
 /// The trace:
@@ -160,6 +286,13 @@ impl TestMode {
 /// 3. Configures VGA via xreg: CANVAS, MODE=3, attr, config_ptr=0
 /// 4. Exits after one frame worth of cycles
 pub fn generate_test_trace(mode: TestMode) -> Vec<BusTransaction> {
+    match mode {
+        TestMode::Text1bpp320x240 | TestMode::Text8bpp320x240 => {
+            return generate_mode1_test_trace(mode);
+        }
+        _ => {}
+    }
+
     let mut trace = Vec::new();
     let mut cycle: u64 = 0;
 
