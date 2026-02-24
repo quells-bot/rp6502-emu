@@ -1,5 +1,33 @@
 use crate::bus::BusTransaction;
 
+/// Field offsets for `vga_mode3_config_t` from `cc65/include/rp6502.h`.
+/// Mirrors the C struct layout for use with `xram0_struct_set`.
+#[allow(non_upper_case_globals)]
+pub mod vga_mode3_config_t {
+    pub const X_WRAP: u16 = 0;            // bool (u8)
+    pub const Y_WRAP: u16 = 1;            // bool (u8)
+    pub const X_POS_PX: u16 = 2;          // i16
+    pub const Y_POS_PX: u16 = 4;          // i16
+    pub const WIDTH_PX: u16 = 6;          // i16
+    pub const HEIGHT_PX: u16 = 8;         // i16
+    pub const XRAM_DATA_PTR: u16 = 10;    // u16
+    pub const XRAM_PALETTE_PTR: u16 = 12; // u16
+}
+
+/// Field offsets for `vga_mode1_config_t` from `cc65/include/rp6502.h`.
+#[allow(non_upper_case_globals)]
+pub mod vga_mode1_config_t {
+    pub const X_WRAP: u16 = 0;            // bool (u8)
+    pub const Y_WRAP: u16 = 1;            // bool (u8)
+    pub const X_POS_PX: u16 = 2;          // i16
+    pub const Y_POS_PX: u16 = 4;          // i16
+    pub const WIDTH_CHARS: u16 = 6;       // i16
+    pub const HEIGHT_CHARS: u16 = 8;      // i16
+    pub const XRAM_DATA_PTR: u16 = 10;    // u16
+    pub const XRAM_PALETTE_PTR: u16 = 12; // u16
+    pub const XRAM_FONT_PTR: u16 = 14;    // u16
+}
+
 pub struct TraceBuilder {
     pub trace: Vec<BusTransaction>,
     pub cycle: u64,
