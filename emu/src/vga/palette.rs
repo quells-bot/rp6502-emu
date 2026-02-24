@@ -1,17 +1,31 @@
-/// Convert RGB8 to RGBA u32 (opaque).
-const fn rgba(r: u8, g: u8, b: u8) -> u32 {
-    ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8) | 0xFF
+/// Convert RGB8 to RGBA u32 through the PICO_SCANVIDEO 5-bit round-trip.
+/// This matches the exact pixel values the real hardware produces.
+/// Path: RGB8 → PICO_SCANVIDEO (5-bit per channel + alpha) → RGBA u32.
+const fn pico_rgba(r: u8, g: u8, b: u8) -> u32 {
+    let r5 = r >> 3;
+    let g5 = g >> 3;
+    let b5 = b >> 3;
+    let r8 = (r5 << 3) | (r5 >> 2);
+    let g8 = (g5 << 3) | (g5 >> 2);
+    let b8 = (b5 << 3) | (b5 >> 2);
+    ((r8 as u32) << 24) | ((g8 as u32) << 16) | ((b8 as u32) << 8) | 0xFF
 }
 
-/// Convert RGB8 to RGBA u32 (transparent - alpha 0).
-const fn rgba_transparent(r: u8, g: u8, b: u8) -> u32 {
-    ((r as u32) << 24) | ((g as u32) << 16) | ((b as u32) << 8)
+/// Same as pico_rgba but with alpha=0 (transparent).
+const fn pico_rgba_transparent(r: u8, g: u8, b: u8) -> u32 {
+    let r5 = r >> 3;
+    let g5 = g >> 3;
+    let b5 = b >> 3;
+    let r8 = (r5 << 3) | (r5 >> 2);
+    let g8 = (g5 << 3) | (g5 >> 2);
+    let b8 = (b5 << 3) | (b5 >> 2);
+    ((r8 as u32) << 24) | ((g8 as u32) << 16) | ((b8 as u32) << 8)
 }
 
 /// 1bpp default palette. Index 0 = transparent black, index 1 = opaque light grey.
 pub const PALETTE_2: [u32; 2] = [
-    rgba_transparent(0, 0, 0),
-    rgba(192, 192, 192),
+    pico_rgba_transparent(0, 0, 0),
+    pico_rgba(192, 192, 192),
 ];
 
 /// ANSI 256-color palette matching firmware color_256[] in color.c.
@@ -21,22 +35,22 @@ pub const PALETTE_256: [u32; 256] = {
 
     // 0-15: standard + bright ANSI colors
     // Exact values from firmware color.c
-    p[0] = rgba_transparent(0, 0, 0);  // Black (transparent)
-    p[1] = rgba(205, 0, 0);            // Red
-    p[2] = rgba(0, 205, 0);            // Green
-    p[3] = rgba(205, 205, 0);          // Yellow
-    p[4] = rgba(0, 0, 238);            // Blue
-    p[5] = rgba(205, 0, 205);          // Magenta
-    p[6] = rgba(0, 205, 205);          // Cyan
-    p[7] = rgba(229, 229, 229);        // White
-    p[8] = rgba(127, 127, 127);        // Bright Black
-    p[9] = rgba(255, 0, 0);            // Bright Red
-    p[10] = rgba(0, 255, 0);           // Bright Green
-    p[11] = rgba(255, 255, 0);         // Bright Yellow
-    p[12] = rgba(92, 92, 255);         // Bright Blue
-    p[13] = rgba(255, 0, 255);         // Bright Magenta
-    p[14] = rgba(0, 255, 255);         // Bright Cyan
-    p[15] = rgba(255, 255, 255);       // Bright White
+    p[0] = pico_rgba_transparent(0, 0, 0);  // Black (transparent)
+    p[1] = pico_rgba(205, 0, 0);            // Red
+    p[2] = pico_rgba(0, 205, 0);            // Green
+    p[3] = pico_rgba(205, 205, 0);          // Yellow
+    p[4] = pico_rgba(0, 0, 238);            // Blue
+    p[5] = pico_rgba(205, 0, 205);          // Magenta
+    p[6] = pico_rgba(0, 205, 205);          // Cyan
+    p[7] = pico_rgba(229, 229, 229);        // White
+    p[8] = pico_rgba(127, 127, 127);        // Bright Black
+    p[9] = pico_rgba(255, 0, 0);            // Bright Red
+    p[10] = pico_rgba(0, 255, 0);           // Bright Green
+    p[11] = pico_rgba(255, 255, 0);         // Bright Yellow
+    p[12] = pico_rgba(92, 92, 255);         // Bright Blue
+    p[13] = pico_rgba(255, 0, 255);         // Bright Magenta
+    p[14] = pico_rgba(0, 255, 255);         // Bright Cyan
+    p[15] = pico_rgba(255, 255, 255);       // Bright White
 
     // 16-231: 6x6x6 RGB cube
     // Levels: [0, 95, 135, 175, 215, 255]
@@ -48,7 +62,7 @@ pub const PALETTE_256: [u32; 256] = {
         while gi < 6 {
             let mut bi = 0;
             while bi < 6 {
-                p[i] = rgba(levels[ri], levels[gi], levels[bi]);
+                p[i] = pico_rgba(levels[ri], levels[gi], levels[bi]);
                 i += 1;
                 bi += 1;
             }
@@ -61,7 +75,7 @@ pub const PALETTE_256: [u32; 256] = {
     let mut g = 0u16;
     while g < 24 {
         let v = (8 + g * 10) as u8;
-        p[232 + g as usize] = rgba(v, v, v);
+        p[232 + g as usize] = pico_rgba(v, v, v);
         g += 1;
     }
 
@@ -97,27 +111,27 @@ mod tests {
         // Black is transparent
         assert_eq!(PALETTE_256[0] & 0xFF, 0x00);
         // Red
-        assert_eq!(PALETTE_256[1], rgba(205, 0, 0));
+        assert_eq!(PALETTE_256[1], pico_rgba(205, 0, 0));
         // Grey0 (index 16) is opaque black
-        assert_eq!(PALETTE_256[16], rgba(0, 0, 0));
+        assert_eq!(PALETTE_256[16], pico_rgba(0, 0, 0));
         // Bright white
-        assert_eq!(PALETTE_256[15], rgba(255, 255, 255));
+        assert_eq!(PALETTE_256[15], pico_rgba(255, 255, 255));
     }
 
     #[test]
     fn test_palette_256_rgb_cube() {
         // Index 16 = (0,0,0), index 21 = (0,0,255)
-        assert_eq!(PALETTE_256[21], rgba(0, 0, 255));
+        assert_eq!(PALETTE_256[21], pico_rgba(0, 0, 255));
         // Index 196 = (255,0,0)
-        assert_eq!(PALETTE_256[196], rgba(255, 0, 0));
+        assert_eq!(PALETTE_256[196], pico_rgba(255, 0, 0));
     }
 
     #[test]
     fn test_palette_256_greyscale() {
         // Index 232 = grey(8)
-        assert_eq!(PALETTE_256[232], rgba(8, 8, 8));
+        assert_eq!(PALETTE_256[232], pico_rgba(8, 8, 8));
         // Index 255 = grey(238)
-        assert_eq!(PALETTE_256[255], rgba(238, 238, 238));
+        assert_eq!(PALETTE_256[255], pico_rgba(238, 238, 238));
     }
 
     #[test]
@@ -150,6 +164,19 @@ mod tests {
         assert_eq!((rgba_val >> 24) & 0xFF, 0xFF); // R = 0xFF (0x1F scaled)
         assert_eq!((rgba_val >> 16) & 0xFF, 0x00); // G = 0
         assert_eq!((rgba_val >> 8) & 0xFF, 0x00);  // B = 0
+    }
+
+    #[test]
+    fn test_pico_rgba_matches_rgb565_roundtrip() {
+        // Build the 16-bit PICO value for (205, 0, 0) the way hardware does
+        let r5 = 205u16 >> 3; // 25
+        let g5 = 0u16 >> 3;   // 0
+        let b5 = 0u16 >> 3;   // 0
+        let alpha = 1u16 << 5;
+        let pico16 = (b5 << 11) | (g5 << 6) | alpha | r5;
+        let from_hw = rgb565_to_rgba(pico16);
+        let from_fn = pico_rgba(205, 0, 0);
+        assert_eq!(from_hw, from_fn);
     }
 
     #[test]
