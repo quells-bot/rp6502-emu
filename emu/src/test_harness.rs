@@ -1,4 +1,5 @@
 use crate::bus::BusTransaction;
+use crate::ria_api::{self, TraceBuilder};
 
 /// Valid canvas + color depth combinations that fit in 64KB XRAM.
 /// Each variant encodes both the canvas size and the bits-per-pixel.
@@ -293,100 +294,40 @@ pub fn generate_test_trace(mode: TestMode) -> Vec<BusTransaction> {
         _ => {}
     }
 
-    let mut trace = Vec::new();
-    let mut cycle: u64 = 0;
-
+    let mut tb = TraceBuilder::new();
     let config_ptr: u16 = 0x0000;
     let data_ptr: u16 = 0x0100;
     let (bmp_w, bmp_h) = mode.bitmap_size();
     let bpp = mode.bpp();
 
-    // --- Step 1: Write Mode3Config to XRAM at config_ptr via ADDR0/RW0 ---
-    trace.push(BusTransaction::write(cycle, 0xFFE6, (config_ptr & 0xFF) as u8));
-    cycle += 1;
-    trace.push(BusTransaction::write(cycle, 0xFFE7, (config_ptr >> 8) as u8));
-    cycle += 1;
+    // --- Write Mode3Config fields to XRAM ---
+    use ria_api::vga_mode3_config_t::*;
+    tb.xram0_struct_set(config_ptr, X_WRAP, &[0]);
+    tb.xram0_struct_set(config_ptr, Y_WRAP, &[0]);
+    tb.xram0_struct_set(config_ptr, X_POS_PX, &0i16.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, Y_POS_PX, &0i16.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, WIDTH_PX, &bmp_w.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, HEIGHT_PX, &bmp_h.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, XRAM_DATA_PTR, &data_ptr.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, XRAM_PALETTE_PTR, &0u16.to_le_bytes());
 
-    // 14 bytes: x_wrap, y_wrap, x_pos, y_pos, width, height, data_ptr, palette_ptr
-    let config_bytes: [u8; 14] = [
-        0, 0,                                                      // x_wrap=false, y_wrap=false
-        0, 0,                                                      // x_pos_px = 0
-        0, 0,                                                      // y_pos_px = 0
-        (bmp_w & 0xFF) as u8, (bmp_w >> 8) as u8,                // width_px (little-endian)
-        (bmp_h & 0xFF) as u8, (bmp_h >> 8) as u8,                // height_px
-        (data_ptr & 0xFF) as u8, (data_ptr >> 8) as u8,          // xram_data_ptr
-        0, 0,                                                      // xram_palette_ptr = 0 (built-in)
-    ];
-    for &b in &config_bytes {
-        trace.push(BusTransaction::write(cycle, 0xFFE4, b));
-        cycle += 1;
-    }
-
-    // --- Step 2: Write pixel data ---
-    trace.push(BusTransaction::write(cycle, 0xFFE6, (data_ptr & 0xFF) as u8));
-    cycle += 1;
-    trace.push(BusTransaction::write(cycle, 0xFFE7, (data_ptr >> 8) as u8));
-    cycle += 1;
-
+    // --- Write pixel data ---
     let bytes_per_row = (bmp_w as u32 * bpp as u32).div_ceil(8);
-
+    let mut pixel_data = Vec::new();
     for y in 0..bmp_h as u32 {
         for byte_x in 0..bytes_per_row {
-            let byte_val = pattern_byte(byte_x, y, bpp, bmp_w as u32);
-            trace.push(BusTransaction::write(cycle, 0xFFE4, byte_val));
-            cycle += 1;
+            pixel_data.push(pattern_byte(byte_x, y, bpp, bmp_w as u32));
         }
     }
+    tb.xram0_write(data_ptr, &pixel_data);
 
-    // --- Step 3: Configure VGA via xreg ---
-    // Two separate xreg calls, matching SDK usage:
-    //   xreg(1, 0, 0, canvas)          — sets CANVAS (reg 0), resets planes
-    //   xreg(1, 0, 1, mode, attr, ...) — programs MODE (reg 1) with attrs (regs 2-6)
+    // --- Configure VGA ---
+    tb.xreg_vga_canvas(mode.canvas_reg());
+    tb.xreg_vga_mode(&[3, mode.attr(), config_ptr, 0, 0, 0]);
 
-    // First xreg: CANVAS only (device=1, channel=0, start_addr=0)
-    trace.push(BusTransaction::write(cycle, 0xFFEC, 1));
-    cycle += 1;
-    trace.push(BusTransaction::write(cycle, 0xFFEC, 0));
-    cycle += 1;
-    trace.push(BusTransaction::write(cycle, 0xFFEC, 0));
-    cycle += 1;
-    let canvas = mode.canvas_reg();
-    trace.push(BusTransaction::write(cycle, 0xFFEC, (canvas >> 8) as u8));
-    cycle += 1;
-    trace.push(BusTransaction::write(cycle, 0xFFEC, (canvas & 0xFF) as u8));
-    cycle += 1;
-    trace.push(BusTransaction::write(cycle, 0xFFEF, 0x01));
-    cycle += 1;
-
-    // Second xreg: MODE + attributes (device=1, channel=0, start_addr=1)
-    trace.push(BusTransaction::write(cycle, 0xFFEC, 1));
-    cycle += 1;
-    trace.push(BusTransaction::write(cycle, 0xFFEC, 0));
-    cycle += 1;
-    trace.push(BusTransaction::write(cycle, 0xFFEC, 1));
-    cycle += 1;
-    // Push register values: hi byte first (so lo lands at lower XRAM address = correct LE)
-    let reg_values: [u16; 6] = [
-        3,                  // reg 1: MODE = Mode 3
-        mode.attr(),        // reg 2: attributes (color format)
-        config_ptr,         // reg 3: config_ptr
-        0,                  // reg 4: plane = 0
-        0,                  // reg 5: scanline_begin = 0
-        0,                  // reg 6: scanline_end = 0 (= canvas height)
-    ];
-    for &val in &reg_values {
-        trace.push(BusTransaction::write(cycle, 0xFFEC, (val >> 8) as u8));
-        cycle += 1;
-        trace.push(BusTransaction::write(cycle, 0xFFEC, (val & 0xFF) as u8));
-        cycle += 1;
-    }
-    trace.push(BusTransaction::write(cycle, 0xFFEF, 0x01));
-    cycle += 1;
-
-    // Wait one frame (phi2_freq=8MHz, 60fps -> ~133333 cycles) then exit
-    trace.push(BusTransaction::write(cycle + 200_000, 0xFFEF, 0xFF));
-
-    trace
+    tb.wait_frames(1);
+    tb.op_exit();
+    tb.trace
 }
 
 /// Generate one byte of test pattern data at position (byte_x, y) in a bitmap.
