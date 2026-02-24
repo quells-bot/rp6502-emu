@@ -2,6 +2,7 @@ mod bus;
 mod pix;
 mod ria;
 mod screenshot;
+mod ria_api;
 mod test_harness;
 mod vga;
 
