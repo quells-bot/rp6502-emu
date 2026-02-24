@@ -82,6 +82,41 @@ pub const PALETTE_256: [u32; 256] = {
     p
 };
 
+/// Resolve palette for a given bits-per-pixel from XRAM or built-in.
+///
+/// Shared between Mode 1 and Mode 3. Mirrors firmware palette resolution:
+/// - palette_ptr must be even (word-aligned) and fit in XRAM
+/// - 1bpp falls back to PALETTE_2
+/// - all others fall back to PALETTE_256 (truncated to 1 << bpp)
+/// - 16bpp returns empty vec (direct color, no palette needed)
+///
+/// Note: palette_ptr == 0 is treated as "use built-in" (documented divergence
+/// from firmware which would read XRAM[0]).
+pub fn resolve_palette(xram: &[u8; 65536], bpp: u32, palette_ptr: u16) -> Vec<u32> {
+    if bpp >= 16 {
+        return vec![];
+    }
+
+    let count = 1usize << bpp;
+
+    if palette_ptr & 1 == 0
+        && palette_ptr > 0
+        && (palette_ptr as usize + count * 2) <= 0x10000
+    {
+        let mut pal = Vec::with_capacity(count);
+        for i in 0..count {
+            let offset = palette_ptr as usize + i * 2;
+            let raw = u16::from_le_bytes([xram[offset], xram[offset + 1]]);
+            pal.push(rgb565_to_rgba(raw));
+        }
+        pal
+    } else if bpp == 1 {
+        PALETTE_2.to_vec()
+    } else {
+        PALETTE_256[..count].to_vec()
+    }
+}
+
 /// Convert a 16-bit PICO_SCANVIDEO pixel value (as stored in XRAM custom palettes) to RGBA u32.
 ///
 /// PICO_SCANVIDEO DPI format (from firmware scanvideo.h):
@@ -183,5 +218,29 @@ mod tests {
     fn test_palette_2() {
         assert_eq!(PALETTE_2[0] & 0xFF, 0x00); // transparent
         assert_eq!(PALETTE_2[1] & 0xFF, 0xFF); // opaque
+    }
+
+    #[test]
+    fn test_resolve_palette_builtin_1bpp() {
+        let xram = Box::new([0u8; 65536]);
+        let pal = resolve_palette(&xram, 1, 0);
+        assert_eq!(pal.len(), 2);
+        assert_eq!(pal[0], PALETTE_2[0]);
+        assert_eq!(pal[1], PALETTE_2[1]);
+    }
+
+    #[test]
+    fn test_resolve_palette_builtin_8bpp() {
+        let xram = Box::new([0u8; 65536]);
+        let pal = resolve_palette(&xram, 8, 0);
+        assert_eq!(pal.len(), 256);
+        assert_eq!(pal[1], PALETTE_256[1]);
+    }
+
+    #[test]
+    fn test_resolve_palette_16bpp_empty() {
+        let xram = Box::new([0u8; 65536]);
+        let pal = resolve_palette(&xram, 16, 0);
+        assert!(pal.is_empty());
     }
 }

@@ -1,4 +1,4 @@
-use super::palette::{PALETTE_2, PALETTE_256, rgb565_to_rgba};
+use super::palette::{resolve_palette, rgb565_to_rgba};
 
 /// Mode 3 configuration, read from XRAM at config_ptr.
 /// Matches firmware mode3_config_t exactly:
@@ -102,64 +102,6 @@ impl Mode3Config {
     }
 }
 
-/// Resolve palette for a given format from XRAM or built-in.
-///
-/// Mirrors firmware mode3_get_palette():
-///   - palette_ptr must be even (word-aligned) and fit in XRAM
-///   - 1bpp falls back to color_2 (PALETTE_2)
-///   - all others fall back to color_256 (PALETTE_256)
-fn resolve_palette(xram: &[u8; 65536], format: &ColorFormat, palette_ptr: u16) -> Vec<u32> {
-    match format {
-        ColorFormat::Bpp16 => vec![], // direct color, no palette needed
-        ColorFormat::Bpp1Msb | ColorFormat::Bpp1Lsb => {
-            let count = 2usize;
-            // Note: palette_ptr == 0 is treated as "use default palette" here.
-            // The firmware would read XRAM[0] as a custom palette, but in practice
-            // programs use 0 as a null sentinel (XRAM[0] is typically the config struct).
-            // Check alignment and bounds (mirrors firmware: !(ptr & 1) && fits)
-            if palette_ptr & 1 == 0
-                && palette_ptr > 0
-                && (palette_ptr as usize + count * 2) <= 0x10000
-            {
-                let mut pal = Vec::with_capacity(count);
-                for i in 0..count {
-                    let offset = palette_ptr as usize + i * 2;
-                    let raw = u16::from_le_bytes([xram[offset], xram[offset + 1]]);
-                    pal.push(rgb565_to_rgba(raw));
-                }
-                pal
-            } else {
-                PALETTE_2.to_vec()
-            }
-        }
-        _ => {
-            let count = 1usize << format.bits_per_pixel();
-            // Note: the firmware uses `2 ^ bpp` here (C bitwise XOR, not exponentiation),
-            // which is a firmware bug (e.g. bpp=8 gives 10 instead of 256). We use
-            // the correct `1 << bpp` count to avoid loading garbage for large palettes.
-            // Note: palette_ptr == 0 is treated as "use default palette" here.
-            // The firmware would read XRAM[0] as a custom palette, but in practice
-            // programs use 0 as a null sentinel (XRAM[0] is typically the config struct).
-            // Check alignment and bounds (mirrors firmware: !(ptr & 1) && fits)
-            if palette_ptr & 1 == 0
-                && palette_ptr > 0
-                && (palette_ptr as usize + count * 2) <= 0x10000
-            {
-                let mut pal = Vec::with_capacity(count);
-                for i in 0..count {
-                    let offset = palette_ptr as usize + i * 2;
-                    let raw = u16::from_le_bytes([xram[offset], xram[offset + 1]]);
-                    pal.push(rgb565_to_rgba(raw));
-                }
-                pal
-            } else {
-                // Use built-in 256-color palette (truncated to count)
-                PALETTE_256[..count].to_vec()
-            }
-        }
-    }
-}
-
 /// Extract a pixel index from bitmap data at a given column offset.
 ///
 /// Bit extraction matches firmware render functions exactly:
@@ -251,7 +193,7 @@ pub fn render_mode3(
         return;
     }
 
-    let palette = resolve_palette(xram, &plane.format, cfg.xram_palette_ptr);
+    let palette = resolve_palette(xram, plane.format.bits_per_pixel(), cfg.xram_palette_ptr);
 
     let y_start = plane.scanline_begin as i32;
     let y_end = if plane.scanline_end == 0 {
@@ -335,6 +277,7 @@ pub fn render_mode3(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vga::palette::PALETTE_256;
 
     fn make_xram_with_config(
         config_ptr: u16,
