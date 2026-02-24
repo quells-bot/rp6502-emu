@@ -31,6 +31,8 @@ pub enum TestMode {
     Text1bpp320x240,
     /// 320x240 canvas, Mode 1, 8bpp 8x8 font (40x30 chars)
     Text8bpp320x240,
+    /// 320x240 canvas, Mode 3, 4bpp LSB-first, Mandelbrot set (matches pico-examples/src/mandelbrot.c)
+    Mandelbrot,
 }
 
 impl std::fmt::Display for TestMode {
@@ -49,6 +51,7 @@ impl std::fmt::Display for TestMode {
             TestMode::Color16bpp320 => "color16bpp320",
             TestMode::Text1bpp320x240 => "text1bpp320x240",
             TestMode::Text8bpp320x240 => "text8bpp320x240",
+            TestMode::Mandelbrot => "mandelbrot",
         };
         write!(f, "{}", name)
     }
@@ -72,6 +75,7 @@ impl std::str::FromStr for TestMode {
             "color16bpp320" => Ok(TestMode::Color16bpp320),
             "text1bpp320x240" => Ok(TestMode::Text1bpp320x240),
             "text8bpp320x240" => Ok(TestMode::Text8bpp320x240),
+            "mandelbrot" => Ok(TestMode::Mandelbrot),
             _ => Err(format!(
                 "unknown mode '{}'. Valid modes: {}",
                 s,
@@ -98,6 +102,7 @@ impl TestMode {
             TestMode::Color16bpp320,
             TestMode::Text1bpp320x240,
             TestMode::Text8bpp320x240,
+            TestMode::Mandelbrot,
         ]
     }
 
@@ -110,7 +115,8 @@ impl TestMode {
             | TestMode::Color4bpp320x180 | TestMode::Color8bpp320x180 => 2,  // 320x180
             TestMode::Mono640x480 => 3,  // 640x480
             TestMode::Mono640x360 | TestMode::Color2bpp640x360 => 4,  // 640x360
-            TestMode::Text1bpp320x240 | TestMode::Text8bpp320x240 => unreachable!(),
+            TestMode::Text1bpp320x240 | TestMode::Text8bpp320x240
+            | TestMode::Mandelbrot => unreachable!(),
         }
     }
 
@@ -135,7 +141,8 @@ impl TestMode {
             TestMode::Color4bpp320x240 | TestMode::Color4bpp320x180 => 4,
             TestMode::Color8bpp320x180 => 8,
             TestMode::Color16bpp320 => 16,
-            TestMode::Text1bpp320x240 | TestMode::Text8bpp320x240 => unreachable!(),
+            TestMode::Text1bpp320x240 | TestMode::Text8bpp320x240
+            | TestMode::Mandelbrot => unreachable!(),
         }
     }
 
@@ -222,6 +229,82 @@ fn generate_mode1_test_trace(mode: TestMode) -> Vec<BusTransaction> {
     tb.trace
 }
 
+/// Generate a bus trace that renders the Mandelbrot set.
+///
+/// Mirrors pico-examples/src/mandelbrot.c exactly:
+/// - 320x240 canvas (canvas reg 1), 2x pixel doubling
+/// - Mode 3, 4bpp LSB-first (attr=10): low nibble = even pixel, high nibble = odd pixel
+/// - Config at 0xFF00, pixel data at 0x0000
+/// - Palette: 0xFFFF (built-in 256-color, uses ANSI indices 0-15)
+/// - 16 Mandelbrot iterations, fixed-point arithmetic (12 frac bits)
+fn generate_mandelbrot_test_trace() -> Vec<BusTransaction> {
+    let mut tb = TraceBuilder::new();
+    let config_ptr: u16 = 0xFF00;
+    let data_ptr: u16 = 0x0000;
+
+    // --- Write Mode3Config fields to XRAM at 0xFF00 ---
+    use ria_api::vga_mode3_config_t::*;
+    tb.xram0_struct_set(config_ptr, X_WRAP, &[0]);
+    tb.xram0_struct_set(config_ptr, Y_WRAP, &[0]);
+    tb.xram0_struct_set(config_ptr, X_POS_PX, &0i16.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, Y_POS_PX, &0i16.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, WIDTH_PX, &320i16.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, HEIGHT_PX, &240i16.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, XRAM_DATA_PTR, &data_ptr.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, XRAM_PALETTE_PTR, &0xFFFFu16.to_le_bytes());
+
+    // --- Write pixel data at 0x0000 (4bpp LSB-first: 160 bytes/row, 38400 total) ---
+    let mut pixel_data = Vec::with_capacity(160 * 240);
+    for py in 0..240i32 {
+        let mut vbyte: u8 = 0;
+        for px in 0..320i32 {
+            let color = mandelbrot_color(px, py);
+            if px & 1 == 0 {
+                vbyte = color;                    // even px: hold in low nibble
+            } else {
+                pixel_data.push(vbyte | (color << 4)); // odd px: pack high nibble, flush
+            }
+        }
+    }
+    tb.xram0_write(data_ptr, &pixel_data);
+
+    // --- Configure VGA ---
+    tb.xreg_vga_canvas(1);                              // 320x240
+    tb.xreg_vga_mode(&[3, 10, config_ptr as u16, 0, 0, 0]); // attr=10 = Bpp4Lsb
+
+    tb.wait_frames(1);
+    tb.op_exit();
+    tb.trace
+}
+
+/// Compute Mandelbrot color index (0-15) for pixel (px, py).
+///
+/// Matches the fixed-point algorithm in pico-examples/src/mandelbrot.c exactly.
+/// FRAC_BITS=12, 16 max iterations. Color 0 = escaped quickly, 15 = inside set.
+fn mandelbrot_color(px: i32, py: i32) -> u8 {
+    const FRAC_BITS: i32 = 12;
+    const WIDTH: i32 = 320;
+    const HEIGHT: i32 = 240;
+    // Fixed-point constants from FINT32(whole, frac) = (whole << 12) | (frac >> 4)
+    let x0 = px * 12288 / WIDTH - 9216;  // range [-2.25, 0.75]
+    let y0 = py * 9175 / HEIGHT - 4587;  // range [-1.12, +1.12]
+    let mut x: i32 = 0;
+    let mut y: i32 = 0;
+    let mut iter: i32 = 0;
+    while iter < 16 {
+        let xx = (x * x) >> FRAC_BITS;
+        let yy = (y * y) >> FRAC_BITS;
+        if xx + yy > (4 << FRAC_BITS) {
+            break;
+        }
+        let xtemp = xx - yy + x0;
+        y = ((x * y) >> (FRAC_BITS - 1)) + y0;
+        x = xtemp;
+        iter += 1;
+    }
+    (iter.wrapping_sub(1) as u8) & 0x0F
+}
+
 /// Generate a bus trace that programs Mode 3 with a test pattern.
 ///
 /// The trace:
@@ -233,6 +316,9 @@ pub fn generate_test_trace(mode: TestMode) -> Vec<BusTransaction> {
     match mode {
         TestMode::Text1bpp320x240 | TestMode::Text8bpp320x240 => {
             return generate_mode1_test_trace(mode);
+        }
+        TestMode::Mandelbrot => {
+            return generate_mandelbrot_test_trace();
         }
         _ => {}
     }
