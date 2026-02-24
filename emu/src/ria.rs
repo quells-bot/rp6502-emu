@@ -327,12 +327,15 @@ impl Ria {
             }
 
             // $FFEC: XSTACK pop
+            // The 6502 sees the current register value (set by previous push/pop).
+            // We return that, then update pointer and register for next access.
             0x0C => {
+                let val = self.regs[0x0C];
                 if self.xstack_ptr < XSTACK_SIZE {
                     self.xstack_ptr += 1;
                 }
                 self.regs[0x0C] = self.xstack[self.xstack_ptr];
-                self.regs[0x0C]
+                val
             }
 
             // $FFF0: IRQ acknowledge
@@ -524,10 +527,19 @@ mod tests {
         assert_eq!(ria.xstack_ptr, XSTACK_SIZE - 2);
         assert_eq!(ria.regs[0x0C], 0x43);
 
-        // Pop (read)
+        // Pop (read) — 6502 sees current register value (0x43, set by last push)
         let val = ria.process(&BusTransaction::read(3, 0xFFEC, 0));
-        assert_eq!(val, 0x42); // 0x43 was popped, now TOS is 0x42
+        assert_eq!(val, 0x43); // TOS was 0x43
         assert_eq!(ria.xstack_ptr, XSTACK_SIZE - 1);
+        // After pop, register now reflects new TOS
+        assert_eq!(ria.regs[0x0C], 0x42);
+
+        // Pop again — 6502 sees 0x42 (set by previous pop's update)
+        let val2 = ria.process(&BusTransaction::read(4, 0xFFEC, 0));
+        assert_eq!(val2, 0x42);
+        assert_eq!(ria.xstack_ptr, XSTACK_SIZE);
+        // Stack empty — reads zero sentinel
+        assert_eq!(ria.regs[0x0C], 0);
     }
 
     #[test]
