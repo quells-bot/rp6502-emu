@@ -28,6 +28,20 @@ pub mod vga_mode1_config_t {
     pub const XRAM_FONT_PTR: u16 = 14;    // u16
 }
 
+/// Field offsets for `vga_mode2_config_t` from `cc65/include/rp6502.h`.
+#[allow(non_upper_case_globals)]
+pub mod vga_mode2_config_t {
+    pub const X_WRAP: u16 = 0;
+    pub const Y_WRAP: u16 = 1;
+    pub const X_POS_PX: u16 = 2;
+    pub const Y_POS_PX: u16 = 4;
+    pub const WIDTH_TILES: u16 = 6;
+    pub const HEIGHT_TILES: u16 = 8;
+    pub const XRAM_DATA_PTR: u16 = 10;
+    pub const XRAM_PALETTE_PTR: u16 = 12;
+    pub const XRAM_TILE_PTR: u16 = 14;
+}
+
 pub struct TraceBuilder {
     pub trace: Vec<BusTransaction>,
     pub cycle: u64,
