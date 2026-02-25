@@ -33,6 +33,8 @@ pub enum TestMode {
     Text8bpp320x240,
     /// 320x240 canvas, Mode 3, 4bpp LSB-first, Mandelbrot set (matches pico-examples/src/mandelbrot.c)
     Mandelbrot,
+    /// 320x240 canvas, two planes: Mode 3 1bpp checkerboard (plane 0) + Mode 1 8bpp rainbow text on right half (plane 1)
+    MultiPlane,
 }
 
 impl std::fmt::Display for TestMode {
@@ -52,6 +54,7 @@ impl std::fmt::Display for TestMode {
             TestMode::Text1bpp320x240 => "text1bpp320x240",
             TestMode::Text8bpp320x240 => "text8bpp320x240",
             TestMode::Mandelbrot => "mandelbrot",
+            TestMode::MultiPlane => "multi_plane",
         };
         write!(f, "{}", name)
     }
@@ -76,6 +79,7 @@ impl std::str::FromStr for TestMode {
             "text1bpp320x240" => Ok(TestMode::Text1bpp320x240),
             "text8bpp320x240" => Ok(TestMode::Text8bpp320x240),
             "mandelbrot" => Ok(TestMode::Mandelbrot),
+            "multi_plane" => Ok(TestMode::MultiPlane),
             _ => Err(format!(
                 "unknown mode '{}'. Valid modes: {}",
                 s,
@@ -103,6 +107,7 @@ impl TestMode {
             TestMode::Text1bpp320x240,
             TestMode::Text8bpp320x240,
             TestMode::Mandelbrot,
+            TestMode::MultiPlane,
         ]
     }
 
@@ -116,7 +121,7 @@ impl TestMode {
             TestMode::Mono640x480 => 3,  // 640x480
             TestMode::Mono640x360 | TestMode::Color2bpp640x360 => 4,  // 640x360
             TestMode::Text1bpp320x240 | TestMode::Text8bpp320x240
-            | TestMode::Mandelbrot => unreachable!(),
+            | TestMode::Mandelbrot | TestMode::MultiPlane => unreachable!(),
         }
     }
 
@@ -142,7 +147,7 @@ impl TestMode {
             TestMode::Color8bpp320x180 => 8,
             TestMode::Color16bpp320 => 16,
             TestMode::Text1bpp320x240 | TestMode::Text8bpp320x240
-            | TestMode::Mandelbrot => unreachable!(),
+            | TestMode::Mandelbrot | TestMode::MultiPlane => unreachable!(),
         }
     }
 
@@ -305,6 +310,98 @@ fn mandelbrot_color(px: i32, py: i32) -> u8 {
     (iter.wrapping_sub(1) as u8) & 0x0F
 }
 
+/// Generate a bus trace exercising two VGA planes simultaneously.
+///
+/// XRAM layout:
+///   0x0000: Mode3Config (14 bytes)
+///   0x0020: 1bpp checkerboard pixel data (9600 bytes)
+///   0x2600: Mode1Config (16 bytes)
+///   0x2700: character data (20 * 30 * 3 = 1800 bytes)
+///
+/// Plane 0 (Mode 3, 1bpp MSB): full 320x240 canvas, 8x8 pixel checkerboard.
+///   Palette[0] = transparent black, palette[1] = light grey (built-in PALETTE_2).
+///
+/// Plane 1 (Mode 1, 8bpp 8x8): 20 chars wide × 30 chars tall, positioned at x=160
+///   so it occupies only the right half (pixels 160-319). Rainbow foreground colors
+///   (bright ANSI 9-14 cycling per column), transparent background (palette index 0)
+///   so the Mode 3 checkerboard shows through.
+fn generate_multi_plane_test_trace() -> Vec<BusTransaction> {
+    let mut tb = TraceBuilder::new();
+
+    let m3_config_ptr: u16 = 0x0000;
+    let m3_data_ptr: u16 = 0x0020;
+    let m1_config_ptr: u16 = 0x2600;
+    let m1_data_ptr: u16 = 0x2700;
+
+    // --- Plane 0: Mode 3, 1bpp MSB, full-screen checkerboard ---
+    {
+        use ria_api::vga_mode3_config_t::*;
+        tb.xram0_struct_set(m3_config_ptr, X_WRAP, &[0]);
+        tb.xram0_struct_set(m3_config_ptr, Y_WRAP, &[0]);
+        tb.xram0_struct_set(m3_config_ptr, X_POS_PX, &0i16.to_le_bytes());
+        tb.xram0_struct_set(m3_config_ptr, Y_POS_PX, &0i16.to_le_bytes());
+        tb.xram0_struct_set(m3_config_ptr, WIDTH_PX, &320i16.to_le_bytes());
+        tb.xram0_struct_set(m3_config_ptr, HEIGHT_PX, &240i16.to_le_bytes());
+        tb.xram0_struct_set(m3_config_ptr, XRAM_DATA_PTR, &m3_data_ptr.to_le_bytes());
+        tb.xram0_struct_set(m3_config_ptr, XRAM_PALETTE_PTR, &0xFFFFu16.to_le_bytes());
+    }
+
+    // 1bpp MSB: each byte covers 8 pixels; 40 bytes/row, 240 rows = 9600 bytes.
+    // 8x8 pixel squares: block_x = byte index, block_y = row / 8.
+    // Checkerboard: if (block_x + block_y) is odd → 0xFF (grey), else 0x00 (transparent).
+    let mut checkerboard = Vec::with_capacity(40 * 240);
+    for y in 0..240u32 {
+        let block_y = y / 8;
+        for bx in 0..40u32 {
+            checkerboard.push(if (bx + block_y) % 2 != 0 { 0xFFu8 } else { 0x00u8 });
+        }
+    }
+    tb.xram0_write(m3_data_ptr, &checkerboard);
+
+    // --- Plane 1: Mode 1, 8bpp 8x8, right half only ---
+    // x_pos_px = 160 places the char grid at pixel 160 (right half starts here).
+    // width_chars = 20 * 8px = 160px, covering pixels 160-319.
+    let width_chars: i16 = 20;
+    let height_chars: i16 = 30;
+    {
+        use ria_api::vga_mode1_config_t::*;
+        tb.xram0_struct_set(m1_config_ptr, X_WRAP, &[0]);
+        tb.xram0_struct_set(m1_config_ptr, Y_WRAP, &[0]);
+        tb.xram0_struct_set(m1_config_ptr, X_POS_PX, &160i16.to_le_bytes());
+        tb.xram0_struct_set(m1_config_ptr, Y_POS_PX, &0i16.to_le_bytes());
+        tb.xram0_struct_set(m1_config_ptr, WIDTH_CHARS, &width_chars.to_le_bytes());
+        tb.xram0_struct_set(m1_config_ptr, HEIGHT_CHARS, &height_chars.to_le_bytes());
+        tb.xram0_struct_set(m1_config_ptr, XRAM_DATA_PTR, &m1_data_ptr.to_le_bytes());
+        tb.xram0_struct_set(m1_config_ptr, XRAM_PALETTE_PTR, &0xFFFFu16.to_le_bytes());
+        tb.xram0_struct_set(m1_config_ptr, XRAM_FONT_PTR, &0xFFFFu16.to_le_bytes());
+    }
+
+    // Character data: 3 bytes per cell [glyph, fg_index, bg_index].
+    // fg cycles through bright ANSI colors per column for a rainbow effect:
+    //   bright red(9), yellow(11), green(10), cyan(14), blue(12), magenta(13).
+    // bg = 0: palette[0] is transparent in PALETTE_256, so the checkerboard shows through.
+    let rainbow: [u8; 6] = [9, 11, 10, 14, 12, 13];
+    let mut char_data = Vec::with_capacity(width_chars as usize * height_chars as usize * 3);
+    for row in 0..height_chars as u32 {
+        for col in 0..width_chars as u32 {
+            let glyph = 0x21 + ((row * width_chars as u32 + col) % 94) as u8;
+            char_data.push(glyph);
+            char_data.push(rainbow[(col % 6) as usize]);
+            char_data.push(0); // bg = transparent
+        }
+    }
+    tb.xram0_write(m1_data_ptr, &char_data);
+
+    // --- Configure VGA: canvas, then both planes ---
+    tb.xreg_vga_canvas(1);                                      // 320x240
+    tb.xreg_vga_mode(&[3, 0, m3_config_ptr, 0, 0, 0]);         // plane 0: Mode 3, 1bpp MSB
+    tb.xreg_vga_mode(&[1, 3, m1_config_ptr, 1, 0, 0]);         // plane 1: Mode 1, 8bpp 8x8
+
+    tb.wait_frames(1);
+    tb.op_exit();
+    tb.trace
+}
+
 /// Generate a bus trace that programs Mode 3 with a test pattern.
 ///
 /// The trace:
@@ -319,6 +416,9 @@ pub fn generate_test_trace(mode: TestMode) -> Vec<BusTransaction> {
         }
         TestMode::Mandelbrot => {
             return generate_mandelbrot_test_trace();
+        }
+        TestMode::MultiPlane => {
+            return generate_multi_plane_test_trace();
         }
         _ => {}
     }
