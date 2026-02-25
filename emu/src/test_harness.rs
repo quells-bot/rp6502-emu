@@ -35,6 +35,10 @@ pub enum TestMode {
     Mandelbrot,
     /// 320x240 canvas, two planes: Mode 3 1bpp checkerboard (plane 0) + Mode 1 8bpp rainbow text on right half (plane 1)
     MultiPlane,
+    /// 320x240 canvas, Mode 2, 1bpp 8x8 tiles (40x30 tile map, 2 diagonal-stripe tiles)
+    Tile1bpp8x8,
+    /// 320x240 canvas, Mode 2, 1bpp 16x16 tiles (20x15 tile map, 2 tiles)
+    Tile1bpp16x16,
 }
 
 impl std::fmt::Display for TestMode {
@@ -55,6 +59,8 @@ impl std::fmt::Display for TestMode {
             TestMode::Text8bpp320x240 => "text8bpp320x240",
             TestMode::Mandelbrot => "mandelbrot",
             TestMode::MultiPlane => "multi_plane",
+            TestMode::Tile1bpp8x8 => "tile1bpp8x8",
+            TestMode::Tile1bpp16x16 => "tile1bpp16x16",
         };
         write!(f, "{}", name)
     }
@@ -80,6 +86,8 @@ impl std::str::FromStr for TestMode {
             "text8bpp320x240" => Ok(TestMode::Text8bpp320x240),
             "mandelbrot" => Ok(TestMode::Mandelbrot),
             "multi_plane" => Ok(TestMode::MultiPlane),
+            "tile1bpp8x8" => Ok(TestMode::Tile1bpp8x8),
+            "tile1bpp16x16" => Ok(TestMode::Tile1bpp16x16),
             _ => Err(format!(
                 "unknown mode '{}'. Valid modes: {}",
                 s,
@@ -108,6 +116,8 @@ impl TestMode {
             TestMode::Text8bpp320x240,
             TestMode::Mandelbrot,
             TestMode::MultiPlane,
+            TestMode::Tile1bpp8x8,
+            TestMode::Tile1bpp16x16,
         ]
     }
 
@@ -121,7 +131,8 @@ impl TestMode {
             TestMode::Mono640x480 => 3,  // 640x480
             TestMode::Mono640x360 | TestMode::Color2bpp640x360 => 4,  // 640x360
             TestMode::Text1bpp320x240 | TestMode::Text8bpp320x240
-            | TestMode::Mandelbrot | TestMode::MultiPlane => unreachable!(),
+            | TestMode::Mandelbrot | TestMode::MultiPlane
+            | TestMode::Tile1bpp8x8 | TestMode::Tile1bpp16x16 => unreachable!(),
         }
     }
 
@@ -147,7 +158,8 @@ impl TestMode {
             TestMode::Color8bpp320x180 => 8,
             TestMode::Color16bpp320 => 16,
             TestMode::Text1bpp320x240 | TestMode::Text8bpp320x240
-            | TestMode::Mandelbrot | TestMode::MultiPlane => unreachable!(),
+            | TestMode::Mandelbrot | TestMode::MultiPlane
+            | TestMode::Tile1bpp8x8 | TestMode::Tile1bpp16x16 => unreachable!(),
         }
     }
 
@@ -348,7 +360,7 @@ fn generate_multi_plane_test_trace() -> Vec<BusTransaction> {
 
     // 1bpp MSB: each byte covers 8 pixels; 40 bytes/row, 240 rows = 9600 bytes.
     // 8x8 pixel squares: block_x = byte index, block_y = row / 8.
-    // Checkerboard: if (block_x + block_y) is odd → 0xFF (grey), else 0x00 (transparent).
+    // Checkerboard: if (bx + block_y) is odd → 0xFF (grey), else 0x00 (transparent).
     let mut checkerboard = Vec::with_capacity(40 * 240);
     for y in 0..240u32 {
         let block_y = y / 8;
@@ -402,6 +414,83 @@ fn generate_multi_plane_test_trace() -> Vec<BusTransaction> {
     tb.trace
 }
 
+/// Generate a bus trace that programs Mode 2 (Tile) with a test pattern.
+///
+/// The trace:
+/// 1. Writes a Mode2Config struct to XRAM at 0xFF00 via ADDR0/RW0
+/// 2. Writes tile bitmap data at 0x1000 via ADDR0/RW0
+/// 3. Writes the tile map at 0x0000 via ADDR0/RW0
+/// 4. Configures VGA via xreg: CANVAS, MODE=2, attr, config_ptr
+/// 5. Exits after one frame worth of cycles
+fn generate_mode2_test_trace(mode: TestMode) -> Vec<BusTransaction> {
+    let mut tb = TraceBuilder::new();
+    let config_ptr: u16 = 0xFF00;
+    let data_ptr: u16 = 0x0000;
+    let tile_ptr: u16 = 0x1000;
+
+    let (width_tiles, height_tiles, attr, tile_size): (i16, i16, u16, usize) = match mode {
+        TestMode::Tile1bpp8x8 => (40, 30, 0, 8),
+        TestMode::Tile1bpp16x16 => (20, 15, 8, 16),
+        _ => panic!("Not a Mode 2 test mode"),
+    };
+
+    // Write Mode2Config
+    use ria_api::vga_mode2_config_t::*;
+    tb.xram0_struct_set(config_ptr, X_WRAP, &[1]);
+    tb.xram0_struct_set(config_ptr, Y_WRAP, &[1]);
+    tb.xram0_struct_set(config_ptr, X_POS_PX, &0i16.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, Y_POS_PX, &0i16.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, WIDTH_TILES, &width_tiles.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, HEIGHT_TILES, &height_tiles.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, XRAM_DATA_PTR, &data_ptr.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, XRAM_PALETTE_PTR, &0xFFFFu16.to_le_bytes());
+    tb.xram0_struct_set(config_ptr, XRAM_TILE_PTR, &tile_ptr.to_le_bytes());
+
+    // Write tile bitmaps (matching pico-examples/src/mode2.c)
+    if tile_size == 8 {
+        // Tile 0: diagonal stripe ascending
+        let tile0: [u8; 8] = [1, 2, 4, 8, 16, 32, 64, 128];
+        // Tile 1: diagonal stripe descending
+        let tile1: [u8; 8] = [128, 64, 32, 16, 8, 4, 2, 1];
+        tb.xram0_write(tile_ptr, &tile0);
+        tb.xram0_write(tile_ptr + 8, &tile1);
+    } else {
+        // 16x16 tiles: 2 bytes/row, 16 rows = 32 bytes each
+        // Tile 0: "X" pattern (from pico-examples)
+        let tile0: [u8; 32] = [
+            1, 128, 2, 64, 4, 32, 8, 16,
+            16, 8, 32, 4, 64, 2, 128, 1,
+            128, 1, 64, 2, 32, 4, 16, 8,
+            8, 16, 4, 32, 2, 64, 1, 128,
+        ];
+        // Tile 1: "diamond" pattern (from pico-examples)
+        let tile1: [u8; 32] = [
+            128, 1, 64, 2, 32, 4, 16, 8,
+            8, 16, 4, 32, 2, 64, 1, 128,
+            1, 128, 2, 64, 4, 32, 8, 16,
+            16, 8, 32, 4, 64, 2, 128, 1,
+        ];
+        tb.xram0_write(tile_ptr, &tile0);
+        tb.xram0_write(tile_ptr + 32, &tile1);
+    }
+
+    // Write tile map: alternating 0,1 pattern
+    let map_size = width_tiles as usize * height_tiles as usize;
+    let mut tile_map = Vec::with_capacity(map_size);
+    for i in 0..map_size {
+        tile_map.push((i % 2) as u8);
+    }
+    tb.xram0_write(data_ptr, &tile_map);
+
+    // Configure VGA
+    tb.xreg_vga_canvas(1); // 320x240
+    tb.xreg_vga_mode(&[2, attr, config_ptr, 0, 0, 0]);
+
+    tb.wait_frames(1);
+    tb.op_exit();
+    tb.trace
+}
+
 /// Generate a bus trace that programs Mode 3 with a test pattern.
 ///
 /// The trace:
@@ -419,6 +508,9 @@ pub fn generate_test_trace(mode: TestMode) -> Vec<BusTransaction> {
         }
         TestMode::MultiPlane => {
             return generate_multi_plane_test_trace();
+        }
+        TestMode::Tile1bpp8x8 | TestMode::Tile1bpp16x16 => {
+            return generate_mode2_test_trace(mode);
         }
         _ => {}
     }
