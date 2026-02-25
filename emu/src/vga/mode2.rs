@@ -153,6 +153,8 @@ pub fn render_mode2(
     }
 
     let height_px = cfg.height_tiles as i32 * tile_size as i32;
+    // NOTE: The firmware's mode2_fill_cols() hardcodes width_tiles*8 regardless of tile_size,
+    // which is a bug for 16x16 tiles. The emulator uses width_tiles*tile_size (correct).
     let width_px = cfg.width_tiles as i32 * tile_size as i32;
 
     // Bounds check: tile map must fit in XRAM
