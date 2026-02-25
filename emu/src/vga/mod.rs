@@ -1,5 +1,6 @@
 pub mod font;
 pub mod mode1;
+pub mod mode2;
 pub mod mode3;
 pub mod palette;
 
