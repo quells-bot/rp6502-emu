@@ -67,6 +67,7 @@ Full design at `docs/plans/2026-02-21-emulator-design.md`. Covers register behav
 ## Current Scope
 
 - **Mode 1** (Character): CP437 font, 10 attribute modes (1bpp–4bpp, 8×8 and 8×16 cells)
+- **Mode 2** (Tile): 8x8 and 16×16 tile sizes, 4 color depths (1/2/4/8 bpp), scrolling and wrapping
 - **Mode 3** (Bitmap): all 5 color depths (1/2/4/8/16 bpp), multiple canvas sizes
 - Bus trace replay (binary + text formats)
 - **TraceBuilder** (`ria_api.rs`): high-level helpers that generate bus traces matching cc65 API calls (`xreg`, `xram0_write`, `xram0_struct_set`, `op_exit`, `wait_frames`, etc.)
@@ -110,7 +111,7 @@ cargo run                                              # launch egui window (def
 cargo run -- screenshot --mode mono320x240 -o out.png  # headless screenshot
 ```
 
-Valid `--mode` values: `mono640x480`, `mono640x360`, `mono320x240`, `mono320x180`, `color2bpp640x360`, `color2bpp320x240`, `color2bpp320x180`, `color4bpp320x240`, `color4bpp320x180`, `color8bpp320x180`, `color16bpp320`, `mandelbrot`, `mode1_1bpp_8x8`, `mode1_1bpp_8x16`, `mode1_2bpp_8x8`, `mode1_2bpp_8x16`, `mode1_4bpp_8x8`, `mode1_4bpp_8x16`, `mode1_4bpr_8x8`, `mode1_4bpr_8x16`, `mode1_fg_8x8`, `mode1_fg_8x16`.
+Valid `--mode` values: `mono640x480`, `mono640x360`, `mono320x240`, `mono320x180`, `color2bpp640x360`, `color2bpp320x240`, `color2bpp320x180`, `color4bpp320x240`, `color4bpp320x180`, `color8bpp320x180`, `color16bpp320`, `mandelbrot`, `mode1_1bpp_8x8`, `mode1_1bpp_8x16`, `mode1_2bpp_8x8`, `mode1_2bpp_8x16`, `mode1_4bpp_8x8`, `mode1_4bpp_8x16`, `mode1_4bpr_8x8`, `mode1_4bpr_8x16`, `mode1_fg_8x8`, `mode1_fg_8x16`, `tile1bpp8x8`, `tile1bpp16x16`.
 
 ### Shared framebuffer type
 
