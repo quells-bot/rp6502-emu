@@ -9,6 +9,7 @@ use crossbeam_channel::{Receiver, Sender};
 use crate::pix::{Backchannel, PixEvent, PixRegWrite};
 use mode1::{Mode1Config, Mode1Format, Mode1Plane, render_mode1};
 use mode3::{ColorFormat, Mode3Config, Mode3Plane, render_mode3};
+use mode2::{Mode2Config, Mode2Format, Mode2Plane, render_mode2};
 
 /// Display output is always 640x480.
 const DISPLAY_WIDTH: usize = 640;
@@ -66,6 +67,7 @@ fn upscale_canvas(canvas: &[u32], canvas_w: u16, canvas_h: u16, display: &mut [u
 #[derive(Debug, Clone)]
 pub enum Plane {
     Mode1(Mode1Plane),
+    Mode2(Mode2Plane),
     Mode3(Mode3Plane),
 }
 
@@ -162,6 +164,10 @@ impl Vga {
                             self.program_mode1();
                             let _ = self.backchannel_tx.send(Backchannel::Ack);
                         }
+                        2 => {
+                            self.program_mode2();
+                            let _ = self.backchannel_tx.send(Backchannel::Ack);
+                        }
                         3 => {
                             self.program_mode3();
                             let _ = self.backchannel_tx.send(Backchannel::Ack);
@@ -178,6 +184,45 @@ impl Vga {
             }
         }
         // Channel 15: display config, code page, backchannel control - ignored in MVP
+    }
+
+
+    /// Program Mode 2 from accumulated xregs.
+    /// xregs layout for MODE command:
+    ///   xregs[2] = attributes (tile format)
+    ///   xregs[3] = config_ptr (XRAM address of Mode2Config)
+    ///   xregs[4] = plane index (0-2)
+    ///   xregs[5] = scanline_begin
+    ///   xregs[6] = scanline_end (0 = canvas height)
+    fn program_mode2(&mut self) {
+        let attr = self.xregs[2];
+        let config_ptr = self.xregs[3];
+        let plane_idx = self.xregs[4] as usize;
+        let scanline_begin = self.xregs[5];
+        let scanline_end = self.xregs[6];
+
+        if plane_idx >= 3 || config_ptr & 1 != 0 {
+            return;
+        }
+
+        if config_ptr as usize + 16 > 0x10000 {
+            return;
+        }
+
+        let format = match Mode2Format::from_attr(attr) {
+            Some(f) => f,
+            None => return,
+        };
+
+        let config = Mode2Config::from_xram(&self.xram, config_ptr);
+
+        self.planes[plane_idx] = Some(Plane::Mode2(Mode2Plane {
+            config,
+            format,
+            scanline_begin,
+            scanline_end,
+            config_ptr,
+        }));
     }
 
     /// Program Mode 3 from accumulated xregs.
@@ -269,6 +314,11 @@ impl Vga {
                     let fresh_config = Mode1Config::from_xram(&self.xram, p.config_ptr);
                     let current_plane = Mode1Plane { config: fresh_config, ..p.clone() };
                     render_mode1(&current_plane, &self.xram, &mut self.canvas_buf[..pixel_count], w, h);
+                }
+                Plane::Mode2(p) => {
+                    let fresh_config = Mode2Config::from_xram(&self.xram, p.config_ptr);
+                    let current_plane = Mode2Plane { config: fresh_config, ..p.clone() };
+                    render_mode2(&current_plane, &self.xram, &mut self.canvas_buf[..pixel_count], w, h);
                 }
                 Plane::Mode3(p) => {
                     let fresh_config = Mode3Config::from_xram(&self.xram, p.config_ptr);
