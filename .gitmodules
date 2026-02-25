@@ -4,3 +4,9 @@
 [submodule "firmware"]
 	path = firmware
 	url = https://github.com/picocomputer/rp6502.git
+[submodule "pico-examples"]
+	path = pico-examples
+	url = https://github.com/picocomputer/examples.git
+[submodule "cc65"]
+	path = cc65
+	url = https://github.com/picocomputer/cc65.git
